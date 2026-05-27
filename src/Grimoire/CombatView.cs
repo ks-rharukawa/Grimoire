@@ -52,9 +52,9 @@ public class CombatView : Control
 
     public CombatView()
     {
-        // ピクセル規律: anti-alias 全抑止 (style-guide §4)
+        // ピクセル規律: 形状は anti-alias 抑止 (style-guide §4)。
+        // テキスト (特に日本語) は AA を有効にしないと読めないので default のまま。
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
-        TextOptions.SetTextRenderingMode(this, TextRenderingMode.Alias);
 
         var rng = new Random(42);
         for (int i = 0; i < 80; i++)

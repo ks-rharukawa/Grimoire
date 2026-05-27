@@ -33,7 +33,7 @@ Grimoire の visual / UX 仕様。参照画像（[design/mood-board-v1.png](../d
 
 - **本文・カード説明**: システムデフォルト等幅寄り（macOS Hiragino Sans / Win Yu Gothic）
 - **見出し・タイトル**: 同フォントの bold
-- **ピクセル感を出す場合**: フォントサイズを8〜13px に抑え、anti-alias オフ（Avalonia の `TextRenderingMode = SubpixelAntialiased` を `Alias` 系に切替）
+- **テキストの anti-alias**: 日本語の可読性を優先し **AA を有効** にする（default のまま）。形状（円・矩形・線）の anti-alias 抑止とは分けて運用する。Latin 専用の見出しや極小 pixel フォント装飾でのみ `TextOptions.SetTextRenderingMode(.., Alias)` を局所適用
 - **絶対に使わない**: 装飾フォント全般、Comic Sans 系、ハンドライティング系
 
 ## 4. ピクセルアート規律
