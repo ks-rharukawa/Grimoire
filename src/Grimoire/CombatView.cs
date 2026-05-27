@@ -92,6 +92,42 @@ public class CombatView : Control
         DrawStage(context);
         DrawPlayerStrip(context);
         DrawHand(context);
+
+        if (Environment.GetEnvironmentVariable("GRIMOIRE_FONT_PROBE") == "1")
+            DrawFontProbe(context);
+    }
+
+    private static void DrawFontProbe(DrawingContext context)
+    {
+        // 切り分けテスト: 同じ文字列を違う FontFamily 指定で描画。
+        // 全部同じに見えればフォント指定が効いていない証拠。
+        var samples = new (string Label, string FamilyName)[]
+        {
+            ("Typeface.Default          ", ""),
+            ("FF: 'Hiragino Sans'       ", "Hiragino Sans"),
+            ("FF: 'Hiragino Sans, Yu...' ", "Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"),
+            ("FF: 'Yu Gothic'           ", "Yu Gothic"),
+            ("FF: 'PingFang SC'         ", "PingFang SC"),
+            ("FF: 'Comic Sans MS'       ", "Comic Sans MS"),
+            ("FF: 'NoSuchFont12345'     ", "NoSuchFont12345"),
+        };
+        const string body = "障害源を5弱化 ABC123";
+        double y = 8;
+        var bgBrush = new SolidColorBrush(Color.FromArgb(220, 0, 0, 0));
+        context.FillRectangle(bgBrush, new Rect(8, 4, 760, samples.Length * 22 + 8));
+
+        foreach (var s in samples)
+        {
+            Typeface tf = s.FamilyName == ""
+                ? Typeface.Default
+                : new Typeface(new FontFamily(s.FamilyName), FontStyle.Normal, FontWeight.Bold);
+
+            var ft = new FormattedText(s.Label + body, CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, tf, 14,
+                new SolidColorBrush(Color.FromRgb(255, 255, 255)));
+            context.DrawText(ft, new Point(12, y));
+            y += 22;
+        }
     }
 
     // ===== 背景 =====
@@ -585,9 +621,10 @@ public class CombatView : Control
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1),
             new Rect(x + 4, y + 4, CardWidth - 8, CardHeight - 8));
 
-        var nameTypeface = new Typeface(new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"), FontStyle.Normal, FontWeight.Bold);
+        var jpFamily = new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif");
+        var nameTypeface = new Typeface(jpFamily, FontStyle.Normal, FontWeight.Normal);
         var nameFt = new FormattedText(name, CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, nameTypeface, 14, Palette.ParchmentBrush);
+            FlowDirection.LeftToRight, nameTypeface, 15, Palette.ParchmentBrush);
         context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 12));
 
         DrawCostGem(context, x + CardWidth - 30, y + 10, cost);
@@ -598,13 +635,13 @@ public class CombatView : Control
         DrawCardIcon(context, iconRect, icon);
 
         var lines = effect.Split('\n');
-        var effectTypeface = new Typeface(new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"), FontStyle.Normal, FontWeight.Bold);
-        var inkBrush = new SolidColorBrush(Color.FromRgb(26, 26, 26));
+        var effectTypeface = new Typeface(jpFamily, FontStyle.Normal, FontWeight.Normal);
+        var inkBrush = new SolidColorBrush(Color.FromRgb(0, 0, 0));
         for (int i = 0; i < lines.Length; i++)
         {
             var ft = new FormattedText(lines[i], CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight, effectTypeface, 14, inkBrush);
-            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 16 + i * 20));
+                FlowDirection.LeftToRight, effectTypeface, 16, inkBrush);
+            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 16 + i * 22));
         }
     }
 
