@@ -1,0 +1,20 @@
+# .NET / Avalonia
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+
+# Rider / JetBrains
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
