@@ -585,7 +585,7 @@ public class CombatView : Control
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1),
             new Rect(x + 4, y + 4, CardWidth - 8, CardHeight - 8));
 
-        var nameTypeface = new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold);
+        var nameTypeface = new Typeface(new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"), FontStyle.Normal, FontWeight.Bold);
         var nameFt = new FormattedText(name, CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, nameTypeface, 14, Palette.ParchmentBrush);
         context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 12));
@@ -598,7 +598,7 @@ public class CombatView : Control
         DrawCardIcon(context, iconRect, icon);
 
         var lines = effect.Split('\n');
-        var effectTypeface = new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold);
+        var effectTypeface = new Typeface(new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"), FontStyle.Normal, FontWeight.Bold);
         var inkBrush = new SolidColorBrush(Color.FromRgb(26, 26, 26));
         for (int i = 0; i < lines.Length; i++)
         {
