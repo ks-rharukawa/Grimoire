@@ -8,14 +8,12 @@ using Avalonia.Threading;
 
 namespace Grimoire;
 
-// docs/style-guide.md §5「レイアウト（戦闘画面ベース）」を実装する CombatView。
-// 第3イテレーション (richness pass): 星空背景・ライン発光・粒アニメ・カード固有アイコン・フィリグリー詳細。
-// カードクリック・ターン構造は後続イテレーションで追加。
+// docs/style-guide.md §5 の戦闘画面実装。
+// 第4イテレーション (designer 提案反映): Stage 背景の魔法陣・左右フィリグリー・敵 radial halo・粒のトレイル・ピクセル規律修正。
 public class CombatView : Control
 {
     private readonly DispatcherTimer _timer;
 
-    // 寸法 (style-guide §5, 1280x720 基準)
     private const double BookFrameMargin = 80;
     private const double EnemyAreaTop = 40;
     private const double EnemyAreaHeight = 160;
@@ -29,7 +27,6 @@ public class CombatView : Control
     private const double CardWidth = 144;
     private const double CardHeight = 200;
 
-    // ゲーム状態 (静的サンプル、後続で GameState に切り出す)
     private readonly int _playerHp = 28;
     private readonly int _playerHpMax = 30;
     private readonly int _energy = 3;
@@ -38,7 +35,6 @@ public class CombatView : Control
     private readonly int _enemyHpMax = 30;
     private readonly int _enemyIntent = 5;
 
-    // 手札データ (docs/classes.md の決定通り)
     private enum CardIcon { ProbeRadar, ShieldFilter, EchoLoop, LookupGlass, RetryArrow }
     private readonly (string Name, int Cost, string Effect, CardIcon Icon)[] _hand =
     {
@@ -49,22 +45,23 @@ public class CombatView : Control
         ("Retry",         1, "失敗カード\n再使用可",   CardIcon.RetryArrow),
     };
 
-    // 星空 (Midnight 背景の constellation 効果)
     private readonly List<(double X, double Y, byte Alpha, int Size)> _stars = new();
 
-    // アニメーション
-    private double _packetProgress; // 0..1 (client から server へ)
-    private double _pulse;            // sin pulse for breathing effects
+    private double _packetProgress;
+    private double _pulse;
 
     public CombatView()
     {
-        // 星空生成 (固定 seed で再現性)
+        // ピクセル規律: anti-alias 全抑止 (style-guide §4)
+        RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
+        TextOptions.SetTextRenderingMode(this, TextRenderingMode.Alias);
+
         var rng = new Random(42);
         for (int i = 0; i < 80; i++)
         {
             _stars.Add((
-                rng.NextDouble() * 1280,
-                rng.NextDouble() * 720,
+                Math.Floor(rng.NextDouble() * 1280),
+                Math.Floor(rng.NextDouble() * 720),
                 (byte)(40 + rng.Next(120)),
                 rng.Next(3) == 0 ? 2 : 1
             ));
@@ -90,6 +87,7 @@ public class CombatView : Control
         DrawPagesBackground(context);
         DrawStarfield(context);
         DrawBookFrame(context);
+        DrawPageFiligree(context);
         DrawEnemyArea(context);
         DrawStage(context);
         DrawPlayerStrip(context);
@@ -103,6 +101,11 @@ public class CombatView : Control
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(Bounds.Size));
         var pages = new Rect(BookFrameMargin, 0, Bounds.Width - BookFrameMargin * 2, Bounds.Height);
         context.FillRectangle(Palette.MidnightBrush, pages);
+
+        // 製本溝 (gutter) - 中央の縦薄帯
+        var gutterX = Bounds.Width / 2;
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(180, 5, 7, 21)),
+            new Rect(gutterX - 4, 0, 8, Bounds.Height));
     }
 
     private void DrawStarfield(DrawingContext context)
@@ -111,18 +114,20 @@ public class CombatView : Control
         foreach (var s in _stars)
         {
             if (s.X < pages.Left || s.X > pages.Right) continue;
-            var brush = new SolidColorBrush(Color.FromArgb(s.Alpha, 212, 175, 55)); // gold tint
+            var brush = new SolidColorBrush(Color.FromArgb(s.Alpha, 212, 175, 55));
             context.FillRectangle(brush, new Rect(s.X, s.Y, s.Size, s.Size));
         }
     }
 
-    // ===== ブックフレーム (richness: 内側アクセント追加) =====
+    // ===== ブックフレーム (Designer #2: 左右フィリグリー) =====
 
     private void DrawBookFrame(DrawingContext context)
     {
+        // ページ端の縦線
         context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(BookFrameMargin - 2, 0, 2, Bounds.Height));
         context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(Bounds.Width - BookFrameMargin, 0, 2, Bounds.Height));
 
+        // 4 つのコーナー
         const double cornerLen = 40;
         const double cornerThick = 4;
         DrawRichCorner(context, 18, 18, cornerLen, cornerThick, Corner.TopLeft);
@@ -137,17 +142,13 @@ public class CombatView : Control
     {
         var gold = Palette.ArcaneGoldBrush;
         var dim = Palette.ArcaneGoldDimBrush;
-
-        // 外側 L字 (太め)
         switch (c)
         {
             case Corner.TopLeft:
                 context.FillRectangle(gold, new Rect(x, y, len, thick));
                 context.FillRectangle(gold, new Rect(x, y, thick, len));
-                // 内側 L字 (細め、dim)
                 context.FillRectangle(dim, new Rect(x + thick + 4, y + thick + 4, len - thick - 8, 2));
                 context.FillRectangle(dim, new Rect(x + thick + 4, y + thick + 4, 2, len - thick - 8));
-                // 装飾ドット
                 context.FillRectangle(gold, new Rect(x + len - 2, y + len - 2, 4, 4));
                 break;
             case Corner.TopRight:
@@ -174,12 +175,97 @@ public class CombatView : Control
         }
     }
 
-    // ===== Section A: Enemy Area =====
+    private void DrawPageFiligree(DrawingContext context)
+    {
+        // 左右の各サイドストリップ: コンパスローズ (上) + ぶら下がる玉珠連 (中) + 円形紋章 (下)
+        const double sideCenter = 40; // BookFrameMargin / 2
+        DrawSideFiligree(context, sideCenter);
+        DrawSideFiligree(context, Bounds.Width - sideCenter);
+    }
+
+    private void DrawSideFiligree(DrawingContext context, double cx)
+    {
+        // (1) 上: 8 角コンパスローズ (y=100)
+        DrawCompassRose(context, cx, 100);
+
+        // (2) 中: ぶら下がり玉珠連 (y=180 〜 540)
+        for (int i = 0; i < 8; i++)
+        {
+            var by = 180 + i * 45;
+            // 大玉 (4x4)
+            context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(cx - 2, by, 4, 4));
+            // 中玉 (2x2、上下)
+            context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(cx - 1, by + 8, 2, 2));
+            context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(cx - 1, by + 14, 2, 2));
+        }
+
+        // (3) 下: 円形紋章 (y=600)
+        DrawEmblem(context, cx, 600);
+    }
+
+    private void DrawCompassRose(DrawingContext context, double cx, double cy)
+    {
+        var gold = Palette.ArcaneGoldBrush;
+        var dim = Palette.ArcaneGoldDimBrush;
+        // 8 方向のスパイク
+        // 上下 (太)
+        context.FillRectangle(gold, new Rect(cx - 1, cy - 18, 2, 16));
+        context.FillRectangle(gold, new Rect(cx - 1, cy + 2, 2, 16));
+        // 左右
+        context.FillRectangle(gold, new Rect(cx - 18, cy - 1, 16, 2));
+        context.FillRectangle(gold, new Rect(cx + 2, cy - 1, 16, 2));
+        // 斜め (細、dim)
+        for (int i = 0; i < 10; i++)
+        {
+            context.FillRectangle(dim, new Rect(cx + i, cy - i - 1, 2, 2));
+            context.FillRectangle(dim, new Rect(cx - i - 1, cy - i - 1, 2, 2));
+            context.FillRectangle(dim, new Rect(cx + i, cy + i, 2, 2));
+            context.FillRectangle(dim, new Rect(cx - i - 1, cy + i, 2, 2));
+        }
+        // 中心円 (4x4 dim + 2x2 gold)
+        context.FillRectangle(dim, new Rect(cx - 4, cy - 4, 8, 8));
+        context.FillRectangle(gold, new Rect(cx - 2, cy - 2, 4, 4));
+    }
+
+    private void DrawEmblem(DrawingContext context, double cx, double cy)
+    {
+        var gold = Palette.ArcaneGoldBrush;
+        var dim = Palette.ArcaneGoldDimBrush;
+        // 外輪 (16x16 のリング、4 隅は欠ける)
+        context.FillRectangle(gold, new Rect(cx - 6, cy - 16, 12, 2));
+        context.FillRectangle(gold, new Rect(cx - 6, cy + 14, 12, 2));
+        context.FillRectangle(gold, new Rect(cx - 16, cy - 6, 2, 12));
+        context.FillRectangle(gold, new Rect(cx + 14, cy - 6, 2, 12));
+        // コーナー dim
+        context.FillRectangle(dim, new Rect(cx - 12, cy - 12, 4, 2));
+        context.FillRectangle(dim, new Rect(cx - 12, cy - 12, 2, 4));
+        context.FillRectangle(dim, new Rect(cx + 8, cy - 12, 4, 2));
+        context.FillRectangle(dim, new Rect(cx + 10, cy - 12, 2, 4));
+        context.FillRectangle(dim, new Rect(cx - 12, cy + 10, 4, 2));
+        context.FillRectangle(dim, new Rect(cx - 12, cy + 8, 2, 4));
+        context.FillRectangle(dim, new Rect(cx + 8, cy + 10, 4, 2));
+        context.FillRectangle(dim, new Rect(cx + 10, cy + 8, 2, 4));
+        // 内側マーク (十字)
+        context.FillRectangle(gold, new Rect(cx - 1, cy - 6, 2, 12));
+        context.FillRectangle(gold, new Rect(cx - 6, cy - 1, 12, 2));
+        // 中心
+        context.FillRectangle(Palette.CrimsonBrush, new Rect(cx - 1, cy - 1, 2, 2));
+    }
+
+    // ===== Section A: Enemy Area (Designer #3: radial halo + cracks) =====
 
     private void DrawEnemyArea(DrawingContext context)
     {
         const double areaLeft = BookFrameMargin + 20;
         var centerX = Bounds.Width / 2;
+
+        // (Designer #3) Crimson radial halo 2 段、パルス
+        var haloPulse = (byte)(40 + Math.Floor(Math.Sin(_pulse) * 30));
+        var innerPulse = (byte)(80 + Math.Floor(Math.Sin(_pulse + 0.5) * 40));
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(haloPulse, 192, 57, 43)),
+            new Rect(centerX - 60, EnemyAreaTop, 120, 130));
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(innerPulse, 192, 57, 43)),
+            new Rect(centerX - 30, EnemyAreaTop + 10, 60, 110));
 
         DrawServerRack(context, centerX - 40, EnemyAreaTop + 5, 80, 110);
 
@@ -195,34 +281,36 @@ public class CombatView : Control
 
     private void DrawServerRack(DrawingContext context, double x, double y, double w, double h)
     {
-        // 影 (1px ずれ)
+        // 影
         context.FillRectangle(Palette.CrimsonDimBrush, new Rect(x + 2, y + 2, w, h));
         // 本体
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(x, y, w, h));
 
-        // 赤い外枠
+        // 外枠
         const double frame = 2;
         context.FillRectangle(Palette.CrimsonBrush, new Rect(x, y, w, frame));
         context.FillRectangle(Palette.CrimsonBrush, new Rect(x, y + h - frame, w, frame));
         context.FillRectangle(Palette.CrimsonBrush, new Rect(x, y, frame, h));
         context.FillRectangle(Palette.CrimsonBrush, new Rect(x + w - frame, y, frame, h));
 
-        // スロット 5段 (グロウあり)
+        // スロット 5段
         for (int i = 0; i < 5; i++)
         {
             var rowY = y + 8 + i * 18;
             context.FillRectangle(Palette.CrimsonDimBrush, new Rect(x + 6, rowY, w - 12, 12));
-            // 微細なライン
             context.FillRectangle(Palette.CrimsonBrush, new Rect(x + 8, rowY + 2, w - 16, 1));
             context.FillRectangle(Palette.CrimsonBrush, new Rect(x + 8, rowY + 8, w - 16, 1));
-            // LED (パルス)
-            var pulse = (byte)(180 + Math.Sin(_pulse + i) * 60);
+            var pulse = (byte)(180 + Math.Floor(Math.Sin(_pulse + i) * 60));
             var ledBrush = new SolidColorBrush(Color.FromArgb(pulse, 192, 57, 43));
             context.FillRectangle(ledBrush, new Rect(x + w - 12, rowY + 4, 4, 4));
         }
 
-        // 火花 (pulse)
-        var sparkAlpha = (byte)(120 + Math.Sin(_pulse * 2) * 100);
+        // (Designer #3) 亀裂: 折れ線 2 本 (1px Crimson)
+        DrawCrack(context, x + 18, y + 20, new[] { (6, 20), (-2, 18), (4, 22) });
+        DrawCrack(context, x + 50, y + 15, new[] { (4, 24), (-3, 20), (5, 28) });
+
+        // 火花 (パルス)
+        var sparkAlpha = (byte)(120 + Math.Floor(Math.Sin(_pulse * 2) * 80));
         var sparkBrush = new SolidColorBrush(Color.FromArgb(sparkAlpha, 212, 175, 55));
         context.FillRectangle(sparkBrush, new Rect(x + w / 2 - 1, y - 8, 2, 4));
         context.FillRectangle(sparkBrush, new Rect(x + w / 2 - 5, y - 6, 2, 2));
@@ -231,7 +319,27 @@ public class CombatView : Control
         context.FillRectangle(sparkBrush, new Rect(x + w / 2 + 6, y - 3, 1, 1));
     }
 
-    // ===== Section B: Stage (§5 動く図) =====
+    private static void DrawCrack(DrawingContext context, double startX, double startY, (int dx, int dy)[] segments)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(220, 192, 57, 43));
+        double cx = startX, cy = startY;
+        foreach (var (dx, dy) in segments)
+        {
+            // 直線セグメントを 1px の点列で描く (Bresenham 簡易版)
+            var steps = Math.Max(Math.Abs(dx), Math.Abs(dy));
+            for (int i = 0; i <= steps; i++)
+            {
+                var t = (double)i / steps;
+                var px = Math.Floor(cx + dx * t);
+                var py = Math.Floor(cy + dy * t);
+                context.FillRectangle(brush, new Rect(px, py, 1, 1));
+            }
+            cx += dx;
+            cy += dy;
+        }
+    }
+
+    // ===== Section B: Stage (Designer #1: 魔法陣背景、#4: trail) =====
 
     private void DrawStage(DrawingContext context)
     {
@@ -241,43 +349,108 @@ public class CombatView : Control
 
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1), stageRect);
 
+        // (Designer #1) 魔法陣・同心円・四隅の十字
+        DrawMagicCircleBackground(context, stageRect);
+
         var lineY = StageTop + (StageHeight - CaptionStripHeight) / 2;
         var clientX = stageRect.X + 80;
         var serverX = stageRect.Right - 80;
 
-        // 接続線 (glow 効果: 3 層の同心ピクセル線)
-        DrawGlowLine(context, clientX + 20, lineY, serverX - 20, lineY);
+        // 接続線 (ピクセル規律: Pen 太さは 1-2 のみ。3 段の手動水平スラブで halo)
+        DrawPixelGlowLine(context, clientX + 20, serverX - 20, lineY);
 
         DrawNetworkNode(context, clientX, lineY, "Client", Palette.LimeGreenBrush, healthy: true);
         DrawNetworkNode(context, serverX, lineY, "Server", Palette.CrimsonBrush, healthy: false);
 
-        // 移動中のパケット (粒)
-        var packetX = clientX + 20 + (_packetProgress) * (serverX - clientX - 40);
-        if (_packetProgress >= 0 && _packetProgress <= 1)
-        {
-            // glow halo
-            var haloBrush = new SolidColorBrush(Color.FromArgb(80, 212, 175, 55));
-            context.FillRectangle(haloBrush, new Rect(packetX - 6, lineY - 6, 12, 12));
-            // 中心
-            context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(packetX - 3, lineY - 3, 6, 6));
-            // ハイライト
-            context.FillRectangle(Palette.ParchmentBrush, new Rect(packetX - 1, lineY - 1, 2, 2));
-        }
+        // (Designer #4) パケット trail
+        DrawPacketWithTrail(context, clientX + 20, serverX - 20, lineY);
 
         DrawCaptionStrip(context, stageRect, "> ブレーカー Closed | 失敗 1/3");
     }
 
-    private static void DrawGlowLine(DrawingContext context, double x1, double y1, double x2, double y2)
+    private void DrawMagicCircleBackground(DrawingContext context, Rect stage)
     {
-        // 外側 (最も薄い、太い)
-        context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(60, 212, 175, 55)), 8),
-            new Point(x1, y1), new Point(x2, y2));
-        // 中間
-        context.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(120, 212, 175, 55)), 4),
-            new Point(x1, y1), new Point(x2, y2));
-        // 内側 (鮮明)
-        context.DrawLine(new Pen(Palette.ArcaneGoldBrush, 2),
-            new Point(x1, y1), new Point(x2, y2));
+        var cx = stage.X + stage.Width / 2;
+        var cy = stage.Y + (stage.Height - CaptionStripHeight) / 2;
+        var dim = new SolidColorBrush(Color.FromArgb(50, 138, 111, 31)); // ArcaneGoldDim α
+
+        // 同心円 3 重
+        DrawPixelCircle(context, cx, cy, 60, dim);
+        DrawPixelCircle(context, cx, cy, 90, dim);
+        DrawPixelCircle(context, cx, cy, 120, dim);
+
+        // 四隅に十字 (8x8)
+        DrawSmallCross(context, stage.X + 30, stage.Y + 30, dim);
+        DrawSmallCross(context, stage.Right - 38, stage.Y + 30, dim);
+        DrawSmallCross(context, stage.X + 30, stage.Bottom - CaptionStripHeight - 38, dim);
+        DrawSmallCross(context, stage.Right - 38, stage.Bottom - CaptionStripHeight - 38, dim);
+    }
+
+    private static void DrawPixelCircle(DrawingContext context, double cx, double cy, double r, IBrush brush)
+    {
+        // 16 分割の弧で表現 (整数化)
+        for (int a = 0; a < 360; a += 6)
+        {
+            var rad = a * Math.PI / 180;
+            var px = Math.Floor(cx + Math.Cos(rad) * r);
+            var py = Math.Floor(cy + Math.Sin(rad) * r);
+            context.FillRectangle(brush, new Rect(px, py, 2, 2));
+        }
+    }
+
+    private static void DrawSmallCross(DrawingContext context, double x, double y, IBrush brush)
+    {
+        context.FillRectangle(brush, new Rect(x + 3, y, 2, 8));
+        context.FillRectangle(brush, new Rect(x, y + 3, 8, 2));
+    }
+
+    private static void DrawPixelGlowLine(DrawingContext context, double x1, double x2, double y)
+    {
+        // 3 段の手動 halo (ピクセル規律遵守: Pen は 1-2px のみ)
+        // y±3 弱
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(60, 212, 175, 55)),
+            new Rect(x1, y - 3, x2 - x1, 1));
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(60, 212, 175, 55)),
+            new Rect(x1, y + 3, x2 - x1, 1));
+        // y±2 中
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(120, 212, 175, 55)),
+            new Rect(x1, y - 2, x2 - x1, 1));
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(120, 212, 175, 55)),
+            new Rect(x1, y + 2, x2 - x1, 1));
+        // y±1 強
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(200, 212, 175, 55)),
+            new Rect(x1, y - 1, x2 - x1, 1));
+        context.FillRectangle(new SolidColorBrush(Color.FromArgb(200, 212, 175, 55)),
+            new Rect(x1, y + 1, x2 - x1, 1));
+        // 中心 (2px Gold)
+        context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x1, y, x2 - x1, 1));
+    }
+
+    private void DrawPacketWithTrail(DrawingContext context, double x1, double x2, double y)
+    {
+        // 6 段の trail (本体 + 5 個の減衰)
+        for (int i = 5; i >= 0; i--)
+        {
+            var progress = _packetProgress - i * 0.025;
+            if (progress < 0 || progress > 1) continue;
+            var px = Math.Floor(x1 + progress * (x2 - x1));
+            var size = 6 - i; // 6,5,4,3,2,1
+            var alpha = (byte)(255 - i * 40);
+
+            if (i == 0)
+            {
+                // 本体 + halo
+                context.FillRectangle(new SolidColorBrush(Color.FromArgb(80, 212, 175, 55)),
+                    new Rect(px - 6, y - 6, 12, 12));
+                context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(px - 3, y - 3, 6, 6));
+                context.FillRectangle(Palette.ParchmentBrush, new Rect(px - 1, y - 1, 2, 2));
+            }
+            else
+            {
+                context.FillRectangle(new SolidColorBrush(Color.FromArgb(alpha, 212, 175, 55)),
+                    new Rect(px - size / 2.0, y - size / 2.0, size, size));
+            }
+        }
     }
 
     private void DrawNetworkNode(DrawingContext context, double cx, double cy, string label, IBrush color, bool healthy)
@@ -285,7 +458,7 @@ public class CombatView : Control
         const double size = 36;
         var rect = new Rect(cx - size / 2, cy - size / 2, size, size);
 
-        // glow halo (健常はシアン、障害は赤)
+        // halo (健常=シアン / 障害=赤)
         var haloColor = healthy ? Color.FromArgb(80, 0, 212, 255) : Color.FromArgb(80, 192, 57, 43);
         context.FillRectangle(new SolidColorBrush(haloColor),
             new Rect(rect.X - 4, rect.Y - 4, size + 8, size + 8));
@@ -294,7 +467,6 @@ public class CombatView : Control
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(rect.X + 4, rect.Y + 4, size - 8, size - 8));
         context.FillRectangle(color, new Rect(rect.X + 8, rect.Y + 8, size - 16, size - 16));
 
-        // ハイライトドット (左上)
         context.FillRectangle(Palette.ParchmentBrush, new Rect(rect.X + 10, rect.Y + 10, 2, 2));
 
         var ft = new FormattedText(label, CultureInfo.CurrentCulture,
@@ -307,9 +479,7 @@ public class CombatView : Control
         var stripRect = new Rect(stage.X + 2, stage.Bottom - CaptionStripHeight - 2,
             stage.Width - 4, CaptionStripHeight);
         context.FillRectangle(Palette.ParchmentBrush, stripRect);
-        // パーチメントの陰影
         context.FillRectangle(new SolidColorBrush(Color.FromArgb(180, 10, 14, 46)), stripRect);
-        // 上下に金線
         context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(stripRect.X, stripRect.Y, stripRect.Width, 1));
         context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(stripRect.X, stripRect.Bottom - 1, stripRect.Width, 1));
 
@@ -351,7 +521,6 @@ public class CombatView : Control
             var gx = gemsX + i * (gemSize + gap);
             var active = i < current;
             var brush = active ? Palette.ArcaneGoldBrush : Palette.ArcaneGoldDimBrush;
-            // ダイヤ + 軽い glow
             if (active)
             {
                 context.FillRectangle(new SolidColorBrush(Color.FromArgb(60, 212, 175, 55)),
@@ -360,11 +529,8 @@ public class CombatView : Control
             context.FillRectangle(brush, new Rect(gx + 4, y, 6, 4));
             context.FillRectangle(brush, new Rect(gx + 2, y + 4, 10, 6));
             context.FillRectangle(brush, new Rect(gx + 4, y + 10, 6, 4));
-            // ハイライト
             if (active)
-            {
                 context.FillRectangle(Palette.ParchmentBrush, new Rect(gx + 5, y + 5, 2, 2));
-            }
         }
 
         var countFt = new FormattedText($"{current}/{max}", CultureInfo.CurrentCulture,
@@ -374,15 +540,10 @@ public class CombatView : Control
 
     private static void DrawEndTurnButton(DrawingContext context, Rect rect)
     {
-        // 影
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(rect.X + 2, rect.Y + 2, rect.Width, rect.Height));
-        // パーチメント本体
         context.FillRectangle(Palette.ParchmentAgedBrush, rect);
-        // 上ハイライト
         context.FillRectangle(Palette.ParchmentBrush, new Rect(rect.X + 2, rect.Y + 2, rect.Width - 4, 3));
-        // ゴールド外枠
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 2), rect);
-        // 内側細枠
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1),
             new Rect(rect.X + 4, rect.Y + 4, rect.Width - 8, rect.Height - 8));
 
@@ -417,36 +578,24 @@ public class CombatView : Control
         // 影
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(x + 3, y + 3, CardWidth, CardHeight));
 
-        // 上半分: Midnight (アート領域)
         context.FillRectangle(Palette.MidnightBrush, new Rect(x, y, CardWidth, CardHeight / 2));
-        // 下半分: Parchment (説明領域)
         context.FillRectangle(Palette.ParchmentBrush, new Rect(x, y + CardHeight / 2, CardWidth, CardHeight / 2));
-
-        // 中央 separator (gold 線)
         context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x, y + CardHeight / 2, CardWidth, 2));
-
-        // 外枠
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 3), cardRect);
-
-        // 内枠 (細)
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1),
             new Rect(x + 4, y + 4, CardWidth - 8, CardHeight - 8));
 
-        // カード名 (上部中央)
         var nameFt = new FormattedText(name, CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 12, Palette.ParchmentBrush);
         context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 10));
 
-        // コスト (右上ゴールドジェム)
         DrawCostGem(context, x + CardWidth - 26, y + 8, cost);
 
-        // アイコン枠 + アイコン
         var iconRect = new Rect(x + (CardWidth - 64) / 2, y + 32, 64, 56);
         context.FillRectangle(Palette.MidnightDeepBrush, iconRect);
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1), iconRect);
         DrawCardIcon(context, iconRect, icon);
 
-        // 効果説明
         var lines = effect.Split('\n');
         for (int i = 0; i < lines.Length; i++)
         {
@@ -459,58 +608,42 @@ public class CombatView : Control
     private static void DrawCostGem(DrawingContext context, double x, double y, int cost)
     {
         const double w = 18, h = 22;
-        // halo
+        // cost=0 は dim 表現
+        var gemBrush = cost == 0 ? Palette.ArcaneGoldDimBrush : Palette.ArcaneGoldBrush;
+
         context.FillRectangle(new SolidColorBrush(Color.FromArgb(80, 212, 175, 55)),
             new Rect(x - 2, y - 2, w + 4, h + 4));
-        // ジェム本体
-        context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x + 4, y, w - 8, 4));
-        context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x + 2, y + 4, w - 4, 12));
-        context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x + 4, y + 16, w - 8, 4));
-        // ハイライト
+        context.FillRectangle(gemBrush, new Rect(x + 4, y, w - 8, 4));
+        context.FillRectangle(gemBrush, new Rect(x + 2, y + 4, w - 4, 12));
+        context.FillRectangle(gemBrush, new Rect(x + 4, y + 16, w - 8, 4));
         context.FillRectangle(Palette.ParchmentBrush, new Rect(x + 6, y + 4, 2, 2));
-        // コスト数字
         var ft = new FormattedText(cost.ToString(), CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 12, Palette.MidnightBrush);
         context.DrawText(ft, new Point(x + (w - ft.Width) / 2, y + (h - ft.Height) / 2 - 1));
     }
 
-    // ===== カード固有のピクセルアートアイコン =====
+    // ===== カード固有アイコン =====
 
     private void DrawCardIcon(DrawingContext context, Rect rect, CardIcon icon)
     {
         var cx = rect.X + rect.Width / 2;
         var cy = rect.Y + rect.Height / 2;
-
         switch (icon)
         {
-            case CardIcon.ProbeRadar:
-                DrawProbeRadar(context, cx, cy);
-                break;
-            case CardIcon.ShieldFilter:
-                DrawShieldFilter(context, cx, cy);
-                break;
-            case CardIcon.EchoLoop:
-                DrawEchoLoop(context, cx, cy);
-                break;
-            case CardIcon.LookupGlass:
-                DrawLookupGlass(context, cx, cy);
-                break;
-            case CardIcon.RetryArrow:
-                DrawRetryArrow(context, cx, cy);
-                break;
+            case CardIcon.ProbeRadar:   DrawProbeRadar(context, cx, cy); break;
+            case CardIcon.ShieldFilter: DrawShieldFilter(context, cx, cy); break;
+            case CardIcon.EchoLoop:     DrawEchoLoop(context, cx, cy); break;
+            case CardIcon.LookupGlass:  DrawLookupGlass(context, cx, cy); break;
+            case CardIcon.RetryArrow:   DrawRetryArrow(context, cx, cy); break;
         }
     }
 
     private void DrawProbeRadar(DrawingContext context, double cx, double cy)
     {
-        // 同心円状のレーダー波 (pixel art arcs)
         var gold = Palette.ArcaneGoldBrush;
         var dim = Palette.ArcaneGoldDimBrush;
-
-        // 内側コア (送信源)
         context.FillRectangle(gold, new Rect(cx - 2, cy - 2, 4, 4));
-        // 弧 (3 段)
-        var pulseR = Math.Sin(_pulse) * 2;
+        var pulseR = Math.Floor(Math.Sin(_pulse) * 2);
         DrawPixelArc(context, cx, cy, 8 + pulseR, gold);
         DrawPixelArc(context, cx, cy, 14, dim);
         DrawPixelArc(context, cx, cy, 20, dim);
@@ -518,70 +651,53 @@ public class CombatView : Control
 
     private static void DrawPixelArc(DrawingContext context, double cx, double cy, double r, IBrush brush)
     {
-        // 簡易ピクセル弧 (上向き 60°、点線で表現)
         for (int a = -40; a <= 40; a += 8)
         {
             var rad = a * Math.PI / 180;
-            var px = cx + Math.Sin(rad) * r;
-            var py = cy - Math.Cos(rad) * r;
+            var px = Math.Floor(cx + Math.Sin(rad) * r);
+            var py = Math.Floor(cy - Math.Cos(rad) * r);
             context.FillRectangle(brush, new Rect(px - 1, py - 1, 2, 2));
         }
     }
 
     private static void DrawShieldFilter(DrawingContext context, double cx, double cy)
     {
-        // 盾型 (Slay the Spire 風)
         var cyan = Palette.EtherealCyanBrush;
         var cyanDim = Palette.EtherealCyanDimBrush;
-
-        // 盾本体 (上が広く下が細い)
         context.FillRectangle(cyan, new Rect(cx - 10, cy - 14, 20, 4));
         context.FillRectangle(cyan, new Rect(cx - 12, cy - 10, 24, 12));
         context.FillRectangle(cyan, new Rect(cx - 8, cy + 2, 16, 6));
         context.FillRectangle(cyan, new Rect(cx - 4, cy + 8, 8, 6));
-        // 影
         context.FillRectangle(cyanDim, new Rect(cx + 4, cy - 8, 6, 8));
-        // 中央クロス
         context.FillRectangle(Palette.ParchmentBrush, new Rect(cx - 1, cy - 6, 2, 8));
         context.FillRectangle(Palette.ParchmentBrush, new Rect(cx - 4, cy - 3, 8, 2));
     }
 
     private static void DrawEchoLoop(DrawingContext context, double cx, double cy)
     {
-        // 循環矢印 (左→右→上→戻る)
         var gold = Palette.ArcaneGoldBrush;
         var dim = Palette.ArcaneGoldDimBrush;
-        // 横線
         context.FillRectangle(gold, new Rect(cx - 12, cy - 2, 18, 3));
         context.FillRectangle(gold, new Rect(cx - 12, cy + 4, 18, 3));
-        // 右側カーブ
         context.FillRectangle(gold, new Rect(cx + 6, cy - 2, 3, 9));
-        // 矢じり (左)
         context.FillRectangle(gold, new Rect(cx - 14, cy - 4, 3, 3));
         context.FillRectangle(gold, new Rect(cx - 16, cy - 2, 3, 3));
         context.FillRectangle(gold, new Rect(cx - 14, cy, 3, 3));
-        // dim sparkle
         context.FillRectangle(dim, new Rect(cx + 10, cy + 6, 2, 2));
     }
 
     private static void DrawLookupGlass(DrawingContext context, double cx, double cy)
     {
-        // 虫眼鏡
         var gold = Palette.ArcaneGoldBrush;
         var parchment = Palette.ParchmentBrush;
-
-        // レンズ (中空の正方形)
         var lensX = cx - 12;
         var lensY = cy - 14;
         const double lensSize = 18;
-        // 外枠
         context.FillRectangle(gold, new Rect(lensX, lensY, lensSize, 3));
         context.FillRectangle(gold, new Rect(lensX, lensY + lensSize - 3, lensSize, 3));
         context.FillRectangle(gold, new Rect(lensX, lensY, 3, lensSize));
         context.FillRectangle(gold, new Rect(lensX + lensSize - 3, lensY, 3, lensSize));
-        // レンズ内ハイライト
         context.FillRectangle(parchment, new Rect(lensX + 4, lensY + 4, 4, 4));
-        // 柄 (斜め)
         context.FillRectangle(gold, new Rect(cx + 4, cy + 2, 4, 4));
         context.FillRectangle(gold, new Rect(cx + 7, cy + 5, 4, 4));
         context.FillRectangle(gold, new Rect(cx + 10, cy + 8, 4, 4));
@@ -589,17 +705,11 @@ public class CombatView : Control
 
     private static void DrawRetryArrow(DrawingContext context, double cx, double cy)
     {
-        // 循環矢印 (時計回り)
         var gold = Palette.ArcaneGoldBrush;
-        // 上の弧
         context.FillRectangle(gold, new Rect(cx - 8, cy - 12, 14, 3));
-        // 右の弧
         context.FillRectangle(gold, new Rect(cx + 4, cy - 9, 3, 12));
-        // 下の弧
         context.FillRectangle(gold, new Rect(cx - 6, cy, 12, 3));
-        // 左の弧
         context.FillRectangle(gold, new Rect(cx - 8, cy - 12, 3, 12));
-        // 矢じり (右下)
         context.FillRectangle(gold, new Rect(cx + 7, cy + 1, 3, 3));
         context.FillRectangle(gold, new Rect(cx + 9, cy + 3, 3, 3));
         context.FillRectangle(gold, new Rect(cx + 7, cy + 5, 3, 3));
@@ -610,14 +720,10 @@ public class CombatView : Control
     private static void DrawBar(DrawingContext context, double x, double y, double w, double h,
         int value, int max, IBrush fill, string label)
     {
-        // 影
         context.FillRectangle(Palette.MidnightDeepBrush, new Rect(x + 1, y + 1, w, h));
-        // 枠
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 1), new Rect(x, y, w, h));
-        // フィル
         var ratio = (double)value / max;
         context.FillRectangle(fill, new Rect(x + 1, y + 1, (w - 2) * ratio, h - 2));
-        // ラベル
         var ft = new FormattedText(label, CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 11, Palette.ParchmentBrush);
         context.DrawText(ft, new Point(x + w + 8, y - 1));
@@ -626,14 +732,12 @@ public class CombatView : Control
     private static void DrawIntent(DrawingContext context, double x, double y, int damage)
     {
         var gold = Palette.ArcaneGoldBrush;
-        // 剣 (より丁寧なドット絵)
         context.FillRectangle(gold, new Rect(x + 7, y, 2, 12));
         context.FillRectangle(gold, new Rect(x + 6, y + 1, 4, 1));
         context.FillRectangle(gold, new Rect(x + 5, y + 11, 6, 1));
         context.FillRectangle(gold, new Rect(x + 3, y + 12, 10, 3));
         context.FillRectangle(gold, new Rect(x + 7, y + 15, 2, 4));
         context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(x + 7, y + 19, 2, 1));
-
         var ft = new FormattedText($"-{damage}", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 16, Palette.CrimsonBrush);
         context.DrawText(ft, new Point(x + 22, y + 2));
