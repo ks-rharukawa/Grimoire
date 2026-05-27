@@ -34,6 +34,20 @@ Grimoire の visual / UX 仕様。参照画像（[design/mood-board-v1.png](../d
 - **本文・カード説明**: システムデフォルト等幅寄り（macOS Hiragino Sans / Win Yu Gothic）
 - **見出し・タイトル**: 同フォントの bold
 - **テキストの anti-alias**: 日本語の可読性を優先し **AA を有効** にする（default のまま）。形状（円・矩形・線）の anti-alias 抑止とは分けて運用する。Latin 専用の見出しや極小 pixel フォント装飾でのみ `TextOptions.SetTextRenderingMode(.., Alias)` を局所適用
+
+### フォント解決の実態（macOS で確認、commit f6917a9 時点）
+
+- `Typeface.Default` = Inter + OS CJK fallback (macOS では Hiragino Sans)
+- `new Typeface(new FontFamily("Hiragino Sans, Yu Gothic, Noto Sans CJK JP, sans-serif"), ...)` でも、**macOS では Typeface.Default と表示が同じ**（CJK が同じ Hiragino Sans に解決されるため）
+- 違いが出るのは Latin 部分または非 Hiragino フォント (PingFang SC / Comic Sans MS 等) を混ぜたとき
+- **コード上の明示指定は Windows (Yu Gothic) / Linux (Noto Sans CJK JP) の互換性のため残す**
+- 漢字の見た目を本質的に変えたいときは: (a) Pixel 日本語フォント embed (PixelMplus / k8x12 / Misaki)、(b) 別 CJK フォント embed (Source Han Sans 等)、(c) システムフォントは変えずレイアウト/コントラストで対処、のいずれか。**フォント名指定だけでは macOS の漢字は変わらない**
+
+### Bold weight と CJK
+
+- **14px 以下で Bold weight は CJK の線が密集して潰れる**ことを実測 (commit f6e0f0d → f6917a9 で Bold 撤回)
+- カード説明など小サイズの日本語テキストは **Regular + 16px 以上** を default にする
+- Bold が必要な場合はサイズを 18px 以上に上げる
 - **絶対に使わない**: 装飾フォント全般、Comic Sans 系、ハンドライティング系
 
 ## 4. ピクセルアート規律

@@ -69,6 +69,18 @@
 4. **コミット**: 各サイクル後に区切れる単位で commit + push
 5. **ユーザー報告**: ループ終了時に 1 文サマリ
 
+## 開発用 capture / probe
+
+実機の見た目を確認するための仕組み。憶測で UI を直す前に必ず capture を取る。
+
+| 環境変数 | 動作 | 用途 |
+|---|---|---|
+| `GRIMOIRE_CAPTURE=<path>` | ヘッドレス Avalonia で CombatView を 1280x720 で描画して PNG 保存して終了 | CI 向け / 高速だが実機とフォント解決が違う可能性あり |
+| `GRIMOIRE_LIVE_CAPTURE=<path>` | 実機 Window を開いて 800ms 後に Window 内容を PNG 保存して終了 | macOS native の Skia / フォント解決で取れる、これが正 |
+| `GRIMOIRE_FONT_PROBE=1` | CombatView の左上にフォント切り分け probe を重ねて表示 | FontFamily 指定が効いているか確認 |
+
+使い方: `cd src/Grimoire && GRIMOIRE_LIVE_CAPTURE=/tmp/foo.png dotnet run`
+
 ## サブエージェント一覧
 
 `.claude/agents/` 配下のカスタムエージェント。それぞれ独立 context で動き、結果を main agent に返す。
