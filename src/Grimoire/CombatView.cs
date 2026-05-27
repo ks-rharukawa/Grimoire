@@ -24,8 +24,8 @@ public class CombatView : Control
     private const double HandTop = 530;
     private const double HandHeight = 170;
     private const double CaptionStripHeight = 32;
-    private const double CardWidth = 144;
-    private const double CardHeight = 200;
+    private const double CardWidth = 160;
+    private const double CardHeight = 220;
 
     private readonly int _playerHp = 28;
     private readonly int _playerHpMax = 30;
@@ -586,12 +586,12 @@ public class CombatView : Control
             new Rect(x + 4, y + 4, CardWidth - 8, CardHeight - 8));
 
         var nameFt = new FormattedText(name, CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 12, Palette.ParchmentBrush);
-        context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 10));
+            FlowDirection.LeftToRight, Typeface.Default, 14, Palette.ParchmentBrush);
+        context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 12));
 
-        DrawCostGem(context, x + CardWidth - 26, y + 8, cost);
+        DrawCostGem(context, x + CardWidth - 30, y + 10, cost);
 
-        var iconRect = new Rect(x + (CardWidth - 64) / 2, y + 32, 64, 56);
+        var iconRect = new Rect(x + (CardWidth - 80) / 2, y + 38, 80, 64);
         context.FillRectangle(Palette.MidnightDeepBrush, iconRect);
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1), iconRect);
         DrawCardIcon(context, iconRect, icon);
@@ -600,25 +600,25 @@ public class CombatView : Control
         for (int i = 0; i < lines.Length; i++)
         {
             var ft = new FormattedText(lines[i], CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight, Typeface.Default, 11, Palette.MidnightBrush);
-            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 14 + i * 16));
+                FlowDirection.LeftToRight, Typeface.Default, 13, Palette.MidnightBrush);
+            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 16 + i * 18));
         }
     }
 
     private static void DrawCostGem(DrawingContext context, double x, double y, int cost)
     {
-        const double w = 18, h = 22;
+        const double w = 22, h = 26;
         // cost=0 は dim 表現
         var gemBrush = cost == 0 ? Palette.ArcaneGoldDimBrush : Palette.ArcaneGoldBrush;
 
         context.FillRectangle(new SolidColorBrush(Color.FromArgb(80, 212, 175, 55)),
             new Rect(x - 2, y - 2, w + 4, h + 4));
-        context.FillRectangle(gemBrush, new Rect(x + 4, y, w - 8, 4));
-        context.FillRectangle(gemBrush, new Rect(x + 2, y + 4, w - 4, 12));
-        context.FillRectangle(gemBrush, new Rect(x + 4, y + 16, w - 8, 4));
-        context.FillRectangle(Palette.ParchmentBrush, new Rect(x + 6, y + 4, 2, 2));
+        context.FillRectangle(gemBrush, new Rect(x + 5, y, w - 10, 5));
+        context.FillRectangle(gemBrush, new Rect(x + 2, y + 5, w - 4, 16));
+        context.FillRectangle(gemBrush, new Rect(x + 5, y + 21, w - 10, 5));
+        context.FillRectangle(Palette.ParchmentBrush, new Rect(x + 7, y + 6, 2, 2));
         var ft = new FormattedText(cost.ToString(), CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 12, Palette.MidnightBrush);
+            FlowDirection.LeftToRight, Typeface.Default, 14, Palette.MidnightBrush);
         context.DrawText(ft, new Point(x + (w - ft.Width) / 2, y + (h - ft.Height) / 2 - 1));
     }
 

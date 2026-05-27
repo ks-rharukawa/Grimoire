@@ -77,7 +77,7 @@ Window 1280x720（PoC では 900x600、本実装で 1280x720 に拡大）
 
 | 属性 | 値 |
 |---|---|
-| 標準サイズ | 144 x 200 px |
+| 標準サイズ | 160 x 220 px |
 | 枠の太さ | 3px |
 | 枠色 | `ArcaneGold` (active) / `ArcaneGoldDim` (inactive) |
 | 背景 | `Midnight` (上半分) → `Parchment` (下半分の説明欄) |
