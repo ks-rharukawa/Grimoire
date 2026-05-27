@@ -1,4 +1,5 @@
 ﻿using Avalonia;
+using Avalonia.Headless;
 using System;
 
 namespace Grimoire;
@@ -9,8 +10,19 @@ class Program
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp()
-        .StartWithClassicDesktopLifetime(args);
+    public static void Main(string[] args)
+    {
+        var builder = BuildAvaloniaApp();
+        // GRIMOIRE_CAPTURE=<path> が立っていれば headless で描画し PNG 保存して終了
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE")))
+        {
+            builder.UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+                   .SetupWithoutStarting();
+            HeadlessCapture.MaybeCapture();
+            return;
+        }
+        builder.StartWithClassicDesktopLifetime(args);
+    }
 
     // Avalonia configuration, don't remove; also used by visual designer.
     public static AppBuilder BuildAvaloniaApp()

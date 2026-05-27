@@ -585,8 +585,9 @@ public class CombatView : Control
         context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1),
             new Rect(x + 4, y + 4, CardWidth - 8, CardHeight - 8));
 
+        var nameTypeface = new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold);
         var nameFt = new FormattedText(name, CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 14, Palette.ParchmentBrush);
+            FlowDirection.LeftToRight, nameTypeface, 14, Palette.ParchmentBrush);
         context.DrawText(nameFt, new Point(x + (CardWidth - nameFt.Width) / 2, y + 12));
 
         DrawCostGem(context, x + CardWidth - 30, y + 10, cost);
@@ -597,11 +598,13 @@ public class CombatView : Control
         DrawCardIcon(context, iconRect, icon);
 
         var lines = effect.Split('\n');
+        var effectTypeface = new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold);
+        var inkBrush = new SolidColorBrush(Color.FromRgb(26, 26, 26));
         for (int i = 0; i < lines.Length; i++)
         {
             var ft = new FormattedText(lines[i], CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight, Typeface.Default, 13, Palette.MidnightBrush);
-            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 16 + i * 18));
+                FlowDirection.LeftToRight, effectTypeface, 14, inkBrush);
+            context.DrawText(ft, new Point(x + (CardWidth - ft.Width) / 2, y + CardHeight / 2 + 16 + i * 20));
         }
     }
 
