@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 1 | クイズのさじ加減 | [quiz-cadence.md](quiz-cadence.md) | 決定済 |
 | 2 | 忘却対策の具体設計 | [forgetting-curve.md](forgetting-curve.md) | 決定済 |
-| 3 | クラス構成（分野・初期デッキ） | `classes.md` | 未着手 |
+| 3 | クラス構成（分野・初期デッキ） | [classes.md](classes.md) | 決定済 |
 | 4 | レアリティの定義 | `rarity.md` | 未着手 |
 | 5 | マイルストーン報酬 | `milestones.md` | 未着手 |
 | 6 | 知識つながりマップ | `knowledge-map.md` | 未着手 |
