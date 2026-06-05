@@ -78,6 +78,7 @@
 | `GRIMOIRE_CAPTURE=<path>` | ヘッドレス Avalonia で CombatView を 1280x720 で描画して PNG 保存して終了 | CI 向け / 高速だが実機とフォント解決が違う可能性あり |
 | `GRIMOIRE_LIVE_CAPTURE=<path>` | 実機 Window を開いて 800ms 後に Window 内容を PNG 保存して終了 | macOS native の Skia / フォント解決で取れる、これが正 |
 | `GRIMOIRE_FONT_PROBE=1` | CombatView の左上にフォント切り分け probe を重ねて表示 | FontFamily 指定が効いているか確認 |
+| `GRIMOIRE_CAPTURE_PROBE=1` | 起動時に probe カードを使用し probe operation の途中状態にする | 戦闘の Probing phase（スロット応答観測）を capture で目視 |
 
 使い方: `cd src/Grimoire && GRIMOIRE_LIVE_CAPTURE=/tmp/foo.png dotnet run`
 
