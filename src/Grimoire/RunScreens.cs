@@ -187,6 +187,55 @@ public class RewardView : Control
     }
 }
 
+// 休憩ノード (#10): 焚き火で HP を回復する。
+public class RestView : Control
+{
+    private readonly RunState _run;
+    public int HealAmount { get; }
+    public Action? Rest;
+
+    public RestView(RunState run)
+    {
+        _run = run;
+        HealAmount = Math.Max(1, run.PlayerHpMax * 3 / 10);   // 最大HP の 30% 回復 (StS 流)
+    }
+
+    private Rect RestRect => new((Bounds.Width - 280) / 2, Bounds.Height * 0.55, 280, 52);
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        if (RestRect.Contains(e.GetPosition(this))) Rest?.Invoke();
+        base.OnPointerPressed(e);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        base.Render(context);
+        ScreenUi.Background(context, new Rect(Bounds.Size));
+        var cx = Bounds.Width / 2;
+
+        ScreenUi.Centered(context, "休憩 — 焚き火", cx, 140, 32, Palette.ArcaneGoldBrush);
+        DrawCampfire(context, cx, 250);
+        ScreenUi.Centered(context, $"HP {_run.PlayerHp}/{_run.PlayerHpMax}", cx, 330, 20, Palette.ParchmentBrush);
+
+        ScreenUi.Button(context, RestRect, $"休息する (HP +{HealAmount})");
+    }
+
+    private static void DrawCampfire(DrawingContext context, double cx, double cy)
+    {
+        // 薪 (parchment) + 炎 (gold/crimson のピクセル積み)
+        context.FillRectangle(Palette.ParchmentAgedBrush, new Rect(cx - 28, cy + 20, 56, 8));
+        context.FillRectangle(Palette.ParchmentAgedBrush, new Rect(cx - 20, cy + 14, 40, 8));
+        for (int i = 0; i < 5; i++)
+        {
+            double w = 24 - i * 4;
+            var brush = i < 2 ? Palette.CrimsonBrush : Palette.ArcaneGoldBrush;
+            context.FillRectangle(brush, new Rect(cx - w / 2, cy + 8 - i * 6, w, 6));
+        }
+        context.FillRectangle(Palette.ParchmentBrush, new Rect(cx - 2, cy - 18, 4, 6));
+    }
+}
+
 // ラン結果画面 (勝利 / 敗北 → 新しいラン)。
 public class RunOverView : Control
 {

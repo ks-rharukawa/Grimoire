@@ -13,6 +13,7 @@ public class GameView : Decorator
     public GameView()
     {
         if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_REWARD") == "1") ShowReward();
+        else if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_REST") == "1") Child = new RestView(_run);
         else if (CaptureWantsCombat()) StartCaptureBattle();   // capture は戦闘画面を直接表示
         else ShowMap();
     }
@@ -48,9 +49,7 @@ public class GameView : Decorator
         switch (node.Type)
         {
             case MapNodeType.Rest:
-                _run.Map.Advance(node);
-                _run.PlayerHp = Math.Min(_run.PlayerHpMax, _run.PlayerHp + 8);  // #10 で休憩画面に。今は即時回復
-                ShowMap();
+                ShowRest(node);
                 break;
             default:   // Battle / Elite / Boss → 戦闘
                 StartBattle(node);
@@ -87,6 +86,18 @@ public class GameView : Decorator
         {
             ShowResult(victory: false);
         }
+    }
+
+    private void ShowRest(MapNode node)
+    {
+        var rest = new RestView(_run);
+        rest.Rest = () =>
+        {
+            _run.PlayerHp = Math.Min(_run.PlayerHpMax, _run.PlayerHp + rest.HealAmount);
+            _run.Map.Advance(node);
+            ShowMap();
+        };
+        Child = rest;
     }
 
     private void ShowReward()
