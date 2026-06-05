@@ -70,6 +70,7 @@ public class CombatView : Control
         // capture 用: probe operation 中の状態を撮るためのフック (GRIMOIRE_CAPTURE_PROBE=1)
         if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_PROBE") == "1")
         {
+            _combat.AddBlock(8);   // Block チップ表示の確認用 (filter #3 実装まではここでのみ生成)
             for (int i = 0; i < _combat.Hand.Count; i++)
                 if (_combat.Hand[i].OperationImplemented && _combat.TryPlayCard(i)) break;
             for (int i = 0; i < 60; i++) _combat.Tick();   // 健全スロット帰還 + 過負荷停滞まで進める
@@ -419,11 +420,32 @@ public class CombatView : Control
 
         DrawIntent(context, areaLeft + 20, EnemyAreaTop + 64, _combat.IntentDamage);
 
-        // 過負荷 (Overload) 段数 — probe 成功で弱化する障害状態 (classes.md)
-        var overloadFt = new FormattedText($"過負荷 x{_combat.Overload}", CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 12, Palette.ArcaneGoldBrush);
-        context.DrawText(overloadFt, new Point(areaLeft + 120, EnemyAreaTop + 66));
+        // 障害状態チップ (classes.md 障害状態語彙) — operation で積む / 弱化する
+        double chipX = areaLeft + 110;
+        foreach (var (kind, stacks) in _combat.ActiveEnemyStatuses)
+        {
+            var text = $"{StatusLabel(kind)} x{stacks}";
+            var ft = new FormattedText(text, CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 12, Palette.MidnightBrush);
+            var chipW = ft.Width + 14;
+            var chipRect = new Rect(chipX, EnemyAreaTop + 62, chipW, 18);
+            context.FillRectangle(Palette.ArcaneGoldBrush, chipRect);
+            context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1), chipRect);
+            context.DrawText(ft, new Point(chipX + 7, EnemyAreaTop + 63));
+            chipX += chipW + 8;
+        }
     }
+
+    private static string StatusLabel(StatusKind k) => k switch
+    {
+        StatusKind.Overload => "過負荷",
+        StatusKind.Congestion => "輻輳",
+        StatusKind.PacketLoss => "欠落",
+        StatusKind.Latency => "遅延",
+        StatusKind.AttackTraffic => "攻撃流量",
+        StatusKind.DnsFailure => "名前解決失敗",
+        _ => k.ToString()
+    };
 
     private void DrawServerRack(DrawingContext context, double x, double y, double w, double h)
     {
@@ -517,7 +539,14 @@ public class CombatView : Control
             case CombatPhase.EnemyTurn:
                 caption = "> 敵の反撃";
                 DrawIdleTopology(context, stageRect);
-                DrawCenterBanner(context, stageRect, $"敵の反撃  -{_combat.LastDamage} HP", Palette.CrimsonBrush);
+                string hitMsg;
+                if (!_combat.EnemyHitApplied)
+                    hitMsg = "敵の反撃…";                       // 着弾前は数値を出さない (古い値の誤表示を防ぐ)
+                else if (_combat.LastBlocked > 0)
+                    hitMsg = $"敵の反撃  -{_combat.LastDamage} HP  ({_combat.LastBlocked} ブロックで吸収)";
+                else
+                    hitMsg = $"敵の反撃  -{_combat.LastDamage} HP";
+                DrawCenterBanner(context, stageRect, hitMsg, Palette.CrimsonBrush);
                 break;
 
             default: // Idle / Won / Defeated
@@ -752,6 +781,10 @@ public class CombatView : Control
         DrawBar(context, areaLeft + 20, PlayerStripTop + 18, 220, 14, _combat.PlayerHp, Combat.PlayerHpMax,
             Palette.LimeGreenBrush, $"HP {_combat.PlayerHp}/{Combat.PlayerHpMax}");
 
+        // ブロック表示 (>0 のときシアンの盾チップ。filter #3 が生成)
+        if (_combat.PlayerBlock > 0)
+            DrawBlockChip(context, areaLeft + 300, PlayerStripTop + 14, _combat.PlayerBlock);
+
         DrawEnergyGems(context, areaLeft + 360, PlayerStripTop + 14, _combat.Energy, Combat.EnergyMax);
 
         var pileFt = new FormattedText($"山札 {_combat.DrawPileCount} ・ 捨て {_combat.DiscardPileCount}",
@@ -759,6 +792,20 @@ public class CombatView : Control
         context.DrawText(pileFt, new Point(areaLeft + 600, PlayerStripTop + 18));
 
         DrawEndTurnButton(context, EndTurnRect, _combat.Phase == CombatPhase.Idle);
+    }
+
+    private static void DrawBlockChip(DrawingContext context, double x, double y, int block)
+    {
+        var cyan = Palette.EtherealCyanBrush;
+        // 小さな盾 (pixel)
+        context.FillRectangle(cyan, new Rect(x, y, 14, 4));
+        context.FillRectangle(cyan, new Rect(x + 1, y + 4, 12, 6));
+        context.FillRectangle(cyan, new Rect(x + 3, y + 10, 8, 4));
+        context.FillRectangle(cyan, new Rect(x + 5, y + 14, 4, 3));
+        context.FillRectangle(Palette.MidnightDeepBrush, new Rect(x + 4, y + 5, 6, 4)); // 中抜き
+        var ft = new FormattedText(block.ToString(), CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 13, cyan);
+        context.DrawText(ft, new Point(x + 20, y + 2));
     }
 
     private void DrawEnergyGems(DrawingContext context, double x, double y, int current, int max)

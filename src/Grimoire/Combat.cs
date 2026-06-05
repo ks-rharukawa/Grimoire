@@ -20,6 +20,9 @@ public enum CombatPhase
 
 public enum CardKind { Probe, Filter, Lookup, Echo }
 
+// classes.md 障害状態語彙。敵に積む状態でゲームメカニクスとネットワーク概念を接続する。
+public enum StatusKind { Overload, Congestion, PacketLoss, Latency, AttackTraffic, DnsFailure }
+
 public sealed class Card
 {
     public string Name { get; }
@@ -50,9 +53,31 @@ public sealed class Combat
     public int EnemyHp { get; private set; } = EnemyHpMax;
     public int Energy { get; private set; } = EnergyMax;
 
-    // 敵の障害状態「過負荷 (Overload)」段数。probe 成功で 1 段ずつ弱化。
-    // classes.md 障害状態語彙: 過負荷 = 被ダメージ増 → 敵の攻撃力に加算する。
-    public int Overload { get; private set; } = 3;
+    // プレイヤーのブロック (StS 流: 被ダメージを吸収し、次の手番開始で 0 にリセット)。filter (#3) が生成。
+    private const int StatCap = 9999;   // overflow / UI 崩れ防止の飽和上限
+    public int PlayerBlock { get; private set; }
+    public void AddBlock(int n) { if (n > 0) PlayerBlock = (int)Math.Min(StatCap, (long)PlayerBlock + n); }
+
+    // ===== 敵の障害状態 (classes.md 障害状態語彙) =====
+    // 過負荷 = 被ダメージ増 を IntentDamage に反映。他状態は #3-5 の operation が積む枠組み。
+    private readonly Dictionary<StatusKind, int> _enemyStatus = new();
+    public int EnemyStatusOf(StatusKind k) => _enemyStatus.TryGetValue(k, out var v) ? v : 0;
+    public void AddEnemyStatus(StatusKind k, int n)
+    {
+        var v = (int)Math.Clamp((long)EnemyStatusOf(k) + n, 0, StatCap);
+        if (v == 0) _enemyStatus.Remove(k); else _enemyStatus[k] = v;
+    }
+    public IReadOnlyList<(StatusKind Kind, int Stacks)> ActiveEnemyStatuses
+    {
+        get
+        {
+            var list = new List<(StatusKind, int)>();
+            foreach (var kind in Enum.GetValues<StatusKind>())
+                if (EnemyStatusOf(kind) > 0) list.Add((kind, EnemyStatusOf(kind)));
+            return list;
+        }
+    }
+    public int Overload => EnemyStatusOf(StatusKind.Overload);
     public int IntentDamage => BaseIntent + Overload;
 
     public CombatPhase Phase { get; private set; } = CombatPhase.Idle;
@@ -68,8 +93,15 @@ public sealed class Combat
 
     public Combat()
     {
+        SetupEnemy();
         BuildDeck();
         DrawToFull();
+    }
+
+    private void SetupEnemy()
+    {
+        _enemyStatus.Clear();
+        AddEnemyStatus(StatusKind.Overload, 3);   // 初期障害シナリオ: 過負荷 3 段
     }
 
     // ===== probe operation 状態 =====
@@ -101,6 +133,8 @@ public sealed class Combat
     // ===== 演出タイマ =====
     public bool LastSuccess { get; private set; }
     public int LastDamage { get; private set; }
+    public int LastBlocked { get; private set; }
+    public bool EnemyHitApplied => _enemyApplied;   // 敵の攻撃が実際に着弾したか (バナー表示用)
     private double _resolveT;
     private double _enemyT;
     private bool _enemyApplied;
@@ -198,7 +232,7 @@ public sealed class Combat
         {
             LastDamage = 6;
             EnemyHp = Math.Max(0, EnemyHp - LastDamage);
-            if (Overload > 0) Overload--;   // 過負荷を 1 段弱化（敵 IntentDamage も下がる）
+            AddEnemyStatus(StatusKind.Overload, -1);   // 過負荷を 1 段弱化（敵 IntentDamage も下がる）
         }
         else
         {
@@ -215,7 +249,11 @@ public sealed class Combat
 
     private void ApplyEnemyDamage()
     {
-        LastDamage = IntentDamage;
+        int incoming = IntentDamage;
+        int absorbed = Math.Min(PlayerBlock, incoming);   // ブロックで吸収
+        PlayerBlock -= absorbed;
+        LastBlocked = absorbed;
+        LastDamage = incoming - absorbed;                 // HP に通った分
         PlayerHp = Math.Max(0, PlayerHp - LastDamage);
         _enemyApplied = true;
     }
@@ -227,6 +265,7 @@ public sealed class Combat
             Phase = CombatPhase.Defeated;
             return;
         }
+        PlayerBlock = 0;                // ブロックは次の手番開始でリセット (StS 流)
         Energy = EnergyMax;
         DrawToFull();                   // 新しい手番の手札を引く
         Phase = CombatPhase.Idle;
@@ -285,9 +324,11 @@ public sealed class Combat
         PlayerHp = PlayerHpMax;
         EnemyHp = EnemyHpMax;
         Energy = EnergyMax;
-        Overload = 3;
+        PlayerBlock = 0;
+        SetupEnemy();
         LastSuccess = false;
         LastDamage = 0;
+        LastBlocked = 0;
         _resolveT = 0;
         _enemyT = 0;
         _enemyApplied = false;
