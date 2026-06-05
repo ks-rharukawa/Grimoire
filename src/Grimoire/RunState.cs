@@ -34,3 +34,29 @@ public sealed class RunState
         return deck;
     }
 }
+
+// 戦闘後3択 (#9) の候補カードプール。現状は4 job の基本形 (deck 構成の選択)。
+// per-card のパワー差/上位カードは将来のコンテンツ拡充 (classes.md カードプール設計、試作項目)。
+public static class CardPool
+{
+    private static readonly Card[] All =
+    {
+        new("Probe Request", 1, "過負荷源を\n診断し弱化", CardKind.Probe),
+        new("Packet Filter", 1, "悪性流量を\n選別遮断", CardKind.Filter),
+        new("Lookup",        1, "名前解決で\n+1 ドロー", CardKind.Lookup),
+        new("Echo Reply",    2, "複製で\n複数対処",     CardKind.Echo),
+    };
+
+    public static List<Card> Offer(Random rng, int n)
+    {
+        var pool = new List<Card>(All);
+        var picks = new List<Card>();
+        for (int i = 0; i < n && pool.Count > 0; i++)
+        {
+            int j = rng.Next(pool.Count);
+            picks.Add(pool[j]);
+            pool.RemoveAt(j);
+        }
+        return picks;
+    }
+}

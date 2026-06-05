@@ -12,7 +12,8 @@ public class GameView : Decorator
 
     public GameView()
     {
-        if (CaptureWantsCombat()) StartCaptureBattle();   // capture は戦闘画面を直接表示
+        if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_REWARD") == "1") ShowReward();
+        else if (CaptureWantsCombat()) StartCaptureBattle();   // capture は戦闘画面を直接表示
         else ShowMap();
     }
 
@@ -79,14 +80,24 @@ public class GameView : Decorator
         {
             _run.BattlesWon++;
             _run.Map.Advance(node);
-            // #9 でここに戦闘後3択 (RewardView) を挟む。
             if (node.Type == MapNodeType.Boss) ShowResult(victory: true);
-            else ShowMap();
+            else ShowReward();             // 戦闘後3択 → その後マップへ
         }
         else
         {
             ShowResult(victory: false);
         }
+    }
+
+    private void ShowReward()
+    {
+        var reward = new RewardView(CardPool.Offer(_rng, 3));
+        reward.Chosen = card =>
+        {
+            if (card != null) _run.Deck.Add(card);   // スキップ時は追加なし
+            ShowMap();
+        };
+        Child = reward;
     }
 
     private void ShowResult(bool victory)

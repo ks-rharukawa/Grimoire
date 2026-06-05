@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
@@ -116,6 +117,73 @@ public class RunMapView : Control
         var size = node.Type == MapNodeType.Boss ? 16.0 : 14.0;
         var ft = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, size, brush);
         context.DrawText(ft, new Point(rect.X + (rect.Width - ft.Width) / 2, rect.Y + (rect.Height - ft.Height) / 2));
+    }
+}
+
+// 戦闘後3択 (#9): 3 枚のカードから 1 枚をデッキに加える (スキップ可)。
+public class RewardView : Control
+{
+    private readonly List<Card> _cards;
+    public Action<Card?>? Chosen;   // null = スキップ
+
+    public RewardView(List<Card> cards) { _cards = cards; }
+
+    private const double CardW = 170, CardH = 240, Gap = 30;
+
+    private Rect CardRect(int i)
+    {
+        double total = _cards.Count * CardW + (_cards.Count - 1) * Gap;
+        double startX = (Bounds.Width - total) / 2;
+        double y = Bounds.Height * 0.28;
+        return new Rect(startX + i * (CardW + Gap), y, CardW, CardH);
+    }
+
+    private Rect SkipRect => new((Bounds.Width - 200) / 2, Bounds.Height * 0.28 + CardH + 44, 200, 44);
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        var pos = e.GetPosition(this);
+        for (int i = 0; i < _cards.Count; i++)
+            if (CardRect(i).Contains(pos)) { Chosen?.Invoke(_cards[i]); return; }
+        if (SkipRect.Contains(pos)) Chosen?.Invoke(null);
+        base.OnPointerPressed(e);
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        base.Render(context);
+        ScreenUi.Background(context, new Rect(Bounds.Size));
+        ScreenUi.Centered(context, "報酬 — カードを 1 枚デッキに加える", Bounds.Width / 2, 80, 26, Palette.ArcaneGoldBrush);
+
+        for (int i = 0; i < _cards.Count; i++)
+            DrawCard(context, CardRect(i), _cards[i]);
+
+        ScreenUi.Button(context, SkipRect, "スキップ");
+    }
+
+    private static void DrawCard(DrawingContext context, Rect r, Card card)
+    {
+        context.FillRectangle(Palette.MidnightDeepBrush, new Rect(r.X + 3, r.Y + 3, r.Width, r.Height));
+        context.FillRectangle(Palette.MidnightBrush, new Rect(r.X, r.Y, r.Width, r.Height / 2));
+        context.FillRectangle(Palette.ParchmentBrush, new Rect(r.X, r.Y + r.Height / 2, r.Width, r.Height / 2));
+        context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(r.X, r.Y + r.Height / 2, r.Width, 2));
+        context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 3), r);
+
+        var nameFt = new FormattedText(card.Name, CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 15, Palette.ParchmentBrush);
+        context.DrawText(nameFt, new Point(r.X + (r.Width - nameFt.Width) / 2, r.Y + 14));
+
+        var costFt = new FormattedText(card.Cost.ToString(), CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 16, Palette.ArcaneGoldBrush);
+        context.DrawText(costFt, new Point(r.X + r.Width - 22, r.Y + 10));
+
+        var lines = card.Effect.Split('\n');
+        for (int k = 0; k < lines.Length; k++)
+        {
+            var ft = new FormattedText(lines[k], CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 16, new SolidColorBrush(Color.FromRgb(0, 0, 0)));
+            context.DrawText(ft, new Point(r.X + (r.Width - ft.Width) / 2, r.Y + r.Height / 2 + 24 + k * 24));
+        }
     }
 }
 
