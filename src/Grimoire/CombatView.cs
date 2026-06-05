@@ -84,6 +84,14 @@ public class CombatView : Control
             for (int i = 0; i < Combat.LaneCount; i++)
                 if (_combat.IsLaneMalicious(i)) _combat.ToggleLaneFilter(i);  // 悪性を遮断した状態
         }
+
+        // capture 用: lookup operation の状態 (GRIMOIRE_CAPTURE_LOOKUP=1)
+        if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_LOOKUP") == "1")
+        {
+            for (int i = 0; i < _combat.Hand.Count; i++)
+                if (_combat.Hand[i].Kind == CardKind.Lookup && _combat.TryPlayCard(i)) break;
+            for (int i = 0; i < 30; i++) _combat.Tick();
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -130,6 +138,13 @@ public class CombatView : Control
                 for (int i = 0; i < Combat.LaneCount; i++)
                 {
                     if (LaneRect(i).Contains(pos)) { _combat.ToggleLaneFilter(i); break; }
+                }
+                break;
+
+            case CombatPhase.Lookup:
+                for (int i = 0; i < 3; i++)
+                {
+                    if (LookupActionRect(i).Contains(pos)) { _combat.ResolveLookup((LookupAction)i); break; }
                 }
                 break;
 
@@ -199,6 +214,17 @@ public class CombatView : Control
             var stageRight = Bounds.Width - (BookFrameMargin + 20);
             return new Rect(stageRight - 130, StageTop + StageHeight - CaptionStripHeight - 40, 116, 30);
         }
+    }
+
+    // lookup operation: 3 つの解決アクションボタン (0=キャッシュ参照 1=権威に問い合わせ 2=解決不能)
+    private Rect LookupActionRect(int i)
+    {
+        var stageRight = Bounds.Width - (BookFrameMargin + 20);
+        const double w = 168, gap = 16, h = 32;
+        double total = 3 * w + 2 * gap;
+        double startX = StageInnerLeft + (stageRight - StageInnerLeft - total) / 2;
+        double y = StageTop + StageHeight - CaptionStripHeight - 42;
+        return new Rect(startX + i * (w + gap), y, w, h);
     }
 
     public override void Render(DrawingContext context)
@@ -565,18 +591,28 @@ public class CombatView : Control
                 DrawFilterOperation(context, stageRect);
                 break;
 
+            case CombatPhase.Lookup:
+                caption = "> 名前解決 | TTL と権威の状態を読み、正しい経路を選べ";
+                DrawLookupOperation(context, stageRect);
+                break;
+
             case CombatPhase.Resolving:
                 bool ok = _combat.LastSuccess;
                 string banner;
-                if (_combat.LastOp == CardKind.Filter)
+                switch (_combat.LastOp)
                 {
-                    caption = ok ? $"> 選別成功 | Block +{_combat.LastDamage}" : "> 選別ミス | 不発";
-                    banner = ok ? $"選別成功! Block +{_combat.LastDamage}" : "選別ミス… 不発";
-                }
-                else
-                {
-                    caption = ok ? $"> 過負荷源を特定 | 弱化 -{_combat.LastDamage}" : "> 診断ミス | 不発";
-                    banner = ok ? $"成功! 過負荷を弱化  -{_combat.LastDamage}" : "診断ミス… 不発";
+                    case CardKind.Filter:
+                        caption = ok ? $"> 選別成功 | Block +{_combat.LastDamage}" : "> 選別ミス | 不発";
+                        banner = ok ? $"選別成功! Block +{_combat.LastDamage}" : "選別ミス… 不発";
+                        break;
+                    case CardKind.Lookup:
+                        caption = ok ? "> 名前解決成功 | カード +1" : "> 解決ミス | 不発";
+                        banner = ok ? "解決成功! カード +1" : "解決ミス… 不発";
+                        break;
+                    default:
+                        caption = ok ? $"> 過負荷源を特定 | 弱化 -{_combat.LastDamage}" : "> 診断ミス | 不発";
+                        banner = ok ? $"成功! 過負荷を弱化  -{_combat.LastDamage}" : "診断ミス… 不発";
+                        break;
                 }
                 DrawIdleTopology(context, stageRect);
                 DrawCenterBanner(context, stageRect, banner, ok ? Palette.LimeGreenBrush : Palette.CrimsonBrush);
@@ -746,6 +782,58 @@ public class CombatView : Control
         var applyFt = new FormattedText("適用", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 15, Palette.MidnightBrush);
         context.DrawText(applyFt, new Point(apply.X + (apply.Width - applyFt.Width) / 2, apply.Y + (apply.Height - applyFt.Height) / 2));
+    }
+
+    // ===== lookup operation (docs/card-operations.md アーキタイプ3) =====
+    // キャッシュ TTL / 権威の動的状態を読み、正しい解決経路を選ぶ。固定の名前→IP対応にしない(条件B)。
+    private void DrawLookupOperation(DrawingContext context, Rect stageRect)
+    {
+        double midY = StageTop + 92;
+        double nameX = stageRect.X + 96;
+        double cacheX = stageRect.X + stageRect.Width * 0.42;
+        double authX = stageRect.X + stageRect.Width * 0.70;
+
+        var instr = new FormattedText("キャッシュ TTL と権威の状態を読み、正しい解決経路を選べ",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 13, Palette.ParchmentBrush);
+        context.DrawText(instr, new Point(stageRect.X + (stageRect.Width - instr.Width) / 2, StageTop + 8));
+
+        // 接続線
+        context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(nameX + 18, midY, cacheX - nameX - 36, 1));
+        context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(cacheX + 18, midY, authX - cacheX - 36, 1));
+
+        // 問い合わせ名ノード
+        DrawNetworkNode(context, nameX, midY, "? 名前", Palette.EtherealCyanBrush, healthy: true);
+
+        // キャッシュノード + TTL バー (動的に減る)
+        bool ttlValid = _combat.LookupTtl > 0;
+        DrawNetworkNode(context, cacheX, midY, "キャッシュ", ttlValid ? Palette.EtherealCyanBrush : Palette.ArcaneGoldDimBrush, healthy: ttlValid);
+        var barRect = new Rect(cacheX - 44, midY + 34, 88, 10);
+        context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 1), barRect);
+        if (ttlValid)
+            context.FillRectangle(Palette.EtherealCyanBrush, new Rect(barRect.X + 1, barRect.Y + 1, (barRect.Width - 2) * _combat.LookupTtl, barRect.Height - 2));
+        var ttlFt = new FormattedText(ttlValid ? "TTL 有効" : "TTL 切れ", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 11, ttlValid ? Palette.EtherealCyanBrush : Palette.CrimsonBrush);
+        context.DrawText(ttlFt, new Point(cacheX - ttlFt.Width / 2, midY + 48));
+
+        // 権威サーバノード (NXDOMAIN かどうか)
+        bool nx = _combat.Scenario == LookupScenario.NxDomain;
+        DrawNetworkNode(context, authX, midY, "権威", nx ? Palette.CrimsonBrush : Palette.ArcaneGoldBrush, healthy: !nx);
+        var authFt = new FormattedText(nx ? "NXDOMAIN" : "レコード有り", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 11, nx ? Palette.CrimsonBrush : Palette.ParchmentBrush);
+        context.DrawText(authFt, new Point(authX - authFt.Width / 2, midY + 34));
+
+        // 3 アクションボタン
+        var labels = new[] { "キャッシュ参照", "権威に問い合わせ", "解決不能" };
+        for (int i = 0; i < 3; i++)
+        {
+            var r = LookupActionRect(i);
+            context.FillRectangle(Palette.MidnightDeepBrush, new Rect(r.X + 2, r.Y + 2, r.Width, r.Height));
+            context.FillRectangle(Palette.ParchmentAgedBrush, r);
+            context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 2), r);
+            var bft = new FormattedText(labels[i], CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 14, Palette.MidnightBrush);
+            context.DrawText(bft, new Point(r.X + (r.Width - bft.Width) / 2, r.Y + (r.Height - bft.Height) / 2));
+        }
     }
 
     private static void DrawCenterBanner(DrawingContext context, Rect stageRect, string text, IBrush brush)

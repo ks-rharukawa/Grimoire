@@ -13,11 +13,16 @@ public enum CombatPhase
     Idle,       // プレイヤーの手番。カード選択 / End Turn 可
     Probing,    // probe 使用中。スロットの応答を観測して診断クリック
     Filtering,  // filter 使用中。バースト(悪性)レーンを選別して遮断
+    Lookup,     // lookup 使用中。キャッシュTTL/権威の状態を読み解決経路を選ぶ
     Resolving,  // 効果適用の演出中（短時間）
     EnemyTurn,  // 敵の反撃演出
     Won,
     Defeated
 }
+
+// lookup operation: 名前解決の動的状態と、プレイヤーが選ぶ解決経路。
+public enum LookupScenario { CacheValid, CacheExpired, NxDomain }
+public enum LookupAction { Cache, Authoritative, GiveUp }
 
 public enum CardKind { Probe, Filter, Lookup, Echo }
 
@@ -40,7 +45,7 @@ public sealed class Card
     }
 
     // 操作が実装済みのカード。未実装 job は non-playable（dim 表示）。
-    public bool OperationImplemented => Kind is CardKind.Probe or CardKind.Filter;
+    public bool OperationImplemented => Kind is CardKind.Probe or CardKind.Filter or CardKind.Lookup;
 }
 
 public sealed class Combat
@@ -141,6 +146,13 @@ public sealed class Combat
     public bool IsLaneFiltered(int i) => i >= 0 && i < LaneCount && _laneFiltered[i];
     public double FilterElapsed { get; private set; }
 
+    // ===== lookup operation 状態 (card-operations.md アーキタイプ3) =====
+    // キャッシュTTL / 権威の動的状態を読み、正しい解決経路を選ぶ。静的な名前→IP対応にしない(条件B)。
+    // 毎回シナリオをランダム化するので「この名前→この答え」の固定マッピングが効かない (Q&A退化対策)。
+    public LookupScenario Scenario { get; private set; }
+    public double LookupTtl { get; private set; }    // 0..1 キャッシュ残TTL (CacheValid のみ >0、動的に減る)
+    private double _lookupElapsed;
+
     // ===== 演出タイマ =====
     public CardKind LastOp { get; private set; }    // 直近に使った操作の種別 (resolve バナーの出し分け)
     public bool LastSuccess { get; private set; }
@@ -168,6 +180,12 @@ public sealed class Combat
 
             case CombatPhase.Filtering:
                 FilterElapsed += 1.0 / 60.0;   // パケット密度アニメ用の経過時間
+                break;
+
+            case CombatPhase.Lookup:
+                _lookupElapsed += 1.0 / 60.0;
+                if (Scenario == LookupScenario.CacheValid)
+                    LookupTtl = Math.Max(0.3, 1.0 - _lookupElapsed * 0.05);  // 動的に減るが有効を保つ
                 break;
 
             case CombatPhase.Resolving:
@@ -207,7 +225,7 @@ public sealed class Combat
         if (Phase != CombatPhase.Idle) return false;
         if (index < 0 || index >= _hand.Count) return false;
         var card = _hand[index];
-        if (!card.OperationImplemented) return false;   // lookup/echo は後続
+        if (!card.OperationImplemented) return false;   // echo は後続
         if (Energy < card.Cost) return false;
 
         Energy -= card.Cost;
@@ -218,6 +236,7 @@ public sealed class Combat
         {
             case CardKind.Probe: StartProbe(); break;
             case CardKind.Filter: StartFilter(); break;
+            case CardKind.Lookup: StartLookup(); break;
         }
         return true;
     }
@@ -279,6 +298,54 @@ public sealed class Combat
         {
             LastDamage = 0;                       // 選別ミス = 不発 (quiz-cadence 決定3)
         }
+    }
+
+    // ===== lookup operation =====
+
+    private void StartLookup()
+    {
+        Phase = CombatPhase.Lookup;
+        _lookupElapsed = 0;
+        Scenario = (LookupScenario)_rng.Next(3);   // 毎回ランダム → 固定マッピング無効
+        LookupTtl = Scenario == LookupScenario.CacheValid ? 1.0 : 0.0;
+    }
+
+    private LookupAction CorrectLookupAction => Scenario switch
+    {
+        LookupScenario.CacheValid => LookupAction.Cache,           // TTL 有効 → キャッシュから即解決
+        LookupScenario.CacheExpired => LookupAction.Authoritative, // TTL 切れ → 権威へ問い合わせ
+        _ => LookupAction.GiveUp                                   // NXDOMAIN → 解決不能と判断
+    };
+
+    public void ResolveLookup(LookupAction action)
+    {
+        if (Phase != CombatPhase.Lookup) return;
+        LastSuccess = action == CorrectLookupAction;
+        Phase = CombatPhase.Resolving;
+        _resolveT = 0;
+        if (LastSuccess)
+        {
+            DrawOne();          // 名前解決成功 → 情報取得 = カード +1 ドロー
+            LastDamage = 1;
+        }
+        else
+        {
+            LastDamage = 0;     // 解決ミス = 不発 (ドローなし)
+        }
+    }
+
+    private void DrawOne()
+    {
+        if (_drawPile.Count == 0)
+        {
+            if (_discard.Count == 0) return;
+            _drawPile.AddRange(_discard);
+            _discard.Clear();
+            Shuffle(_drawPile);
+        }
+        var top = _drawPile[^1];
+        _drawPile.RemoveAt(_drawPile.Count - 1);
+        _hand.Add(top);
     }
 
     public void EndTurn()
@@ -409,6 +476,8 @@ public sealed class Combat
         Array.Clear(_laneFiltered, 0, LaneCount);
         Array.Clear(_laneMalicious, 0, LaneCount);
         FilterElapsed = 0;
+        _lookupElapsed = 0;
+        LookupTtl = 0;
         BuildDeck();
         DrawToFull();
         Phase = CombatPhase.Idle;
