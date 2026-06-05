@@ -25,8 +25,8 @@ public enum CombatPhase
 public enum LookupScenario { CacheValid, CacheExpired, NxDomain }
 public enum LookupAction { Cache, Authoritative, GiveUp }
 
-// 敵 (classes.md 決定4: 障害シナリオの代理)。4 種 + 多彩な intent。
-public enum EnemyKind { OverloadServer, AttackTraffic, RequestFlood, CongestionRouter }
+// 敵 (classes.md 決定4: 障害シナリオの代理)。通常4種 (0-3) + ボス。
+public enum EnemyKind { OverloadServer, AttackTraffic, RequestFlood, CongestionRouter, BossCascade }
 public enum IntentKind { Attack, MultiAttack, Buff, Debuff, Defend }
 
 public readonly struct EnemyIntent
@@ -155,6 +155,12 @@ public sealed class Combat
                 EnemyHpMax = 28;
                 AddEnemyStatus(StatusKind.Congestion, 2);
                 break;
+            case EnemyKind.BossCascade:
+                EnemyName = "大規模障害 / Cascade Failure";
+                EnemyHpMax = 52;                         // ボスは厚い HP
+                AddEnemyStatus(StatusKind.Overload, 2);
+                AddEnemyStatus(StatusKind.AttackTraffic, 1);
+                break;
         }
         EnemyHp = EnemyHpMax;
         RollIntent();
@@ -180,6 +186,12 @@ public sealed class Combat
                 0 => new EnemyIntent(IntentKind.Debuff, 2),         // 遅延 2 をプレイヤーに付与
                 1 => new EnemyIntent(IntentKind.Attack, 6),
                 _ => new EnemyIntent(IntentKind.Defend, 6),         // 敵ブロック
+            },
+            EnemyKind.BossCascade => (_turnCount % 3) switch        // ボス: 強力なローテーション
+            {
+                0 => new EnemyIntent(IntentKind.Buff, 2),           // 大きく自己強化 (攻撃が逓増)
+                1 => new EnemyIntent(IntentKind.MultiAttack, 4, 3), // 連撃 4×3
+                _ => new EnemyIntent(IntentKind.Attack, 9 + ov),    // 大ダメージ
             },
             _ => new EnemyIntent(IntentKind.Attack, 5),
         };

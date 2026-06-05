@@ -14,6 +14,9 @@ public class GameView : Decorator
     {
         if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_REWARD") == "1") ShowReward();
         else if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_REST") == "1") Child = new RestView(_run);
+        else if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_BOSS") == "1") StartCaptureBoss();
+        else if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_RESULT") is "victory" or "defeat")
+            Child = new RunOverView(_run, Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_RESULT") == "victory");
         else if (CaptureWantsCombat()) StartCaptureBattle();   // capture は戦闘画面を直接表示
         else ShowMap();
     }
@@ -21,6 +24,12 @@ public class GameView : Decorator
     private void StartCaptureBattle()
     {
         var combat = new Combat(_run.Deck, _run.PlayerHp, EnemyKind.OverloadServer);
+        Child = new CombatView(combat);
+    }
+
+    private void StartCaptureBoss()
+    {
+        var combat = new Combat(_run.Deck, _run.PlayerHp, EnemyKind.BossCascade);
         Child = new CombatView(combat);
     }
 
@@ -67,9 +76,9 @@ public class GameView : Decorator
 
     private EnemyKind EnemyForNode(MapNode node) => node.Type switch
     {
-        MapNodeType.Elite => EnemyKind.RequestFlood,     // 精鋭は逓増型 (#11 で専用調整)
-        MapNodeType.Boss  => EnemyKind.OverloadServer,   // #11 で専用ボスに置き換え
-        _ => (EnemyKind)_rng.Next(4),
+        MapNodeType.Elite => EnemyKind.RequestFlood,     // 精鋭は逓増型
+        MapNodeType.Boss  => EnemyKind.BossCascade,      // 専用ボス
+        _ => (EnemyKind)_rng.Next(4),                    // 通常戦は 4 種からランダム
     };
 
     private void OnBattleFinished(Combat combat, MapNode node)
