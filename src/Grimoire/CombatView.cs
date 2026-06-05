@@ -70,10 +70,19 @@ public class CombatView : Control
         // capture 用: probe operation 中の状態を撮るためのフック (GRIMOIRE_CAPTURE_PROBE=1)
         if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_PROBE") == "1")
         {
-            _combat.AddBlock(8);   // Block チップ表示の確認用 (filter #3 実装まではここでのみ生成)
             for (int i = 0; i < _combat.Hand.Count; i++)
-                if (_combat.Hand[i].OperationImplemented && _combat.TryPlayCard(i)) break;
+                if (_combat.Hand[i].Kind == CardKind.Probe && _combat.TryPlayCard(i)) break;
             for (int i = 0; i < 60; i++) _combat.Tick();   // 健全スロット帰還 + 過負荷停滞まで進める
+        }
+
+        // capture 用: filter operation の途中状態 (GRIMOIRE_CAPTURE_FILTER=1)
+        if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_FILTER") == "1")
+        {
+            for (int i = 0; i < _combat.Hand.Count; i++)
+                if (_combat.Hand[i].Kind == CardKind.Filter && _combat.TryPlayCard(i)) break;
+            for (int i = 0; i < 120; i++) _combat.Tick();                 // パケットを populate
+            for (int i = 0; i < Combat.LaneCount; i++)
+                if (_combat.IsLaneMalicious(i)) _combat.ToggleLaneFilter(i);  // 悪性を遮断した状態
         }
     }
 
@@ -113,6 +122,14 @@ public class CombatView : Control
                 for (int i = 0; i < Combat.SlotCount; i++)
                 {
                     if (SlotRect(i).Contains(pos)) { _combat.DiagnoseSlot(i); break; }
+                }
+                break;
+
+            case CombatPhase.Filtering:
+                if (FilterApplyRect.Contains(pos)) { _combat.CommitFilter(); break; }
+                for (int i = 0; i < Combat.LaneCount; i++)
+                {
+                    if (LaneRect(i).Contains(pos)) { _combat.ToggleLaneFilter(i); break; }
                 }
                 break;
 
@@ -166,6 +183,23 @@ public class CombatView : Control
     private const double SlotTop = StageTop + 24;
 
     private Rect SlotRect(int i) => new(ServerSlotX, SlotTop + i * SlotPitch, SlotWidth, SlotHeight);
+
+    // filter operation: Stage 内に横並びのトラフィックレーン 3 本。
+    private double FilterLaneLeft => StageInnerLeft + 96;                       // 自App 側 (左)
+    private double FilterLaneRight => Bounds.Width - (BookFrameMargin + 20) - 96; // 攻撃元 側 (右)
+    private const double LaneTop = StageTop + 36;
+    private const double LanePitch = 44;
+    private double LaneY(int i) => LaneTop + i * LanePitch;
+    private Rect LaneRect(int i) => new(FilterLaneLeft, LaneY(i) - 16, FilterLaneRight - FilterLaneLeft, 32);
+
+    private Rect FilterApplyRect
+    {
+        get
+        {
+            var stageRight = Bounds.Width - (BookFrameMargin + 20);
+            return new Rect(stageRight - 130, StageTop + StageHeight - CaptionStripHeight - 40, 116, 30);
+        }
+    }
 
     public override void Render(DrawingContext context)
     {
@@ -526,14 +560,26 @@ public class CombatView : Control
                 DrawProbeOperation(context, stageRect);
                 break;
 
+            case CombatPhase.Filtering:
+                caption = "> トラフィック選別中 | バースト(悪性)を遮断し散発(正常)は通す → 適用";
+                DrawFilterOperation(context, stageRect);
+                break;
+
             case CombatPhase.Resolving:
-                caption = _combat.LastSuccess
-                    ? $"> 過負荷源を特定 | 弱化 -{_combat.LastDamage}"
-                    : "> 診断ミス | 不発";
+                bool ok = _combat.LastSuccess;
+                string banner;
+                if (_combat.LastOp == CardKind.Filter)
+                {
+                    caption = ok ? $"> 選別成功 | Block +{_combat.LastDamage}" : "> 選別ミス | 不発";
+                    banner = ok ? $"選別成功! Block +{_combat.LastDamage}" : "選別ミス… 不発";
+                }
+                else
+                {
+                    caption = ok ? $"> 過負荷源を特定 | 弱化 -{_combat.LastDamage}" : "> 診断ミス | 不発";
+                    banner = ok ? $"成功! 過負荷を弱化  -{_combat.LastDamage}" : "診断ミス… 不発";
+                }
                 DrawIdleTopology(context, stageRect);
-                DrawCenterBanner(context, stageRect,
-                    _combat.LastSuccess ? $"成功! 過負荷を弱化  -{_combat.LastDamage}" : "診断ミス… 不発",
-                    _combat.LastSuccess ? Palette.LimeGreenBrush : Palette.CrimsonBrush);
+                DrawCenterBanner(context, stageRect, banner, ok ? Palette.LimeGreenBrush : Palette.CrimsonBrush);
                 break;
 
             case CombatPhase.EnemyTurn:
@@ -633,6 +679,73 @@ public class CombatView : Control
                 }
             }
         }
+    }
+
+    // ===== filter operation (docs/card-operations.md アーキタイプ2) =====
+    // 複数レーンの流量パターンを読み、バースト(悪性)だけを遮断。色で正解を出さない(条件B)。
+    // tell はパケット密度 (バースト=連続 / 散発=正常) のみ。全レーンは同一見た目。
+    private void DrawFilterOperation(DrawingContext context, Rect stageRect)
+    {
+        var laneMidY = LaneY(0) + (Combat.LaneCount - 1) * LanePitch / 2;
+        var playerX = stageRect.X + 56;
+        var enemyX = stageRect.Right - 56;
+
+        DrawNetworkNode(context, playerX, laneMidY, "自App", Palette.EtherealCyanBrush, healthy: true);
+        DrawNetworkNode(context, enemyX, laneMidY, "攻撃元", Palette.CrimsonBrush, healthy: false);
+
+        var instr = new FormattedText("流れの密度を読む — バースト(連続)が悪性、散発が正常通信",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 13, Palette.ParchmentBrush);
+        context.DrawText(instr, new Point(stageRect.X + (stageRect.Width - instr.Width) / 2, StageTop + 8));
+
+        double laneL = FilterLaneLeft, laneR = FilterLaneRight;
+        double gateX = (laneL + laneR) / 2;
+        double phase = _combat.FilterElapsed * 0.16;
+
+        for (int i = 0; i < Combat.LaneCount; i++)
+        {
+            double y = LaneY(i);
+            bool mal = _combat.IsLaneMalicious(i);
+            bool filt = _combat.IsLaneFiltered(i);
+
+            context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(laneL, y, laneR - laneL, 1));
+
+            // パケット (敵→自App、右→左)。密度のみが tell。色は一律 gold (条件B)。
+            int density = mal ? 11 : 3;
+            double spacing = mal ? 0.09 : 0.4;
+            for (int k = 0; k < density; k++)
+            {
+                double f = (phase + k * spacing) % 1.0;
+                double px = laneR - f * (laneR - laneL);
+                if (filt && px <= gateX) continue;          // フィルタ通過後は遮断
+                context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(px - 2, y - 2, 4, 4));
+            }
+
+            // フィルタゲート (遮断中レーンにシアンのバー + ×)
+            if (filt)
+            {
+                context.FillRectangle(Palette.EtherealCyanBrush, new Rect(gateX - 2, y - 12, 4, 24));
+                context.FillRectangle(Palette.EtherealCyanBrush, new Rect(gateX - 8, y - 8, 2, 2));
+                context.FillRectangle(Palette.EtherealCyanBrush, new Rect(gateX + 6, y - 8, 2, 2));
+                context.FillRectangle(Palette.EtherealCyanBrush, new Rect(gateX - 8, y + 6, 2, 2));
+                context.FillRectangle(Palette.EtherealCyanBrush, new Rect(gateX + 6, y + 6, 2, 2));
+            }
+
+            // レーン枠 (filtered = シアン枠でトグル状態を示す)
+            context.DrawRectangle(null,
+                new Pen(filt ? Palette.EtherealCyanBrush : Palette.ArcaneGoldDimBrush, 1), LaneRect(i));
+            var lbl = new FormattedText($"lane {i + 1}", CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 11, Palette.ParchmentBrush);
+            context.DrawText(lbl, new Point(laneL + 4, y - 18));
+        }
+
+        // 適用ボタン
+        var apply = FilterApplyRect;
+        context.FillRectangle(Palette.MidnightDeepBrush, new Rect(apply.X + 2, apply.Y + 2, apply.Width, apply.Height));
+        context.FillRectangle(Palette.ParchmentAgedBrush, apply);
+        context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 2), apply);
+        var applyFt = new FormattedText("適用", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 15, Palette.MidnightBrush);
+        context.DrawText(applyFt, new Point(apply.X + (apply.Width - applyFt.Width) / 2, apply.Y + (apply.Height - applyFt.Height) / 2));
     }
 
     private static void DrawCenterBanner(DrawingContext context, Rect stageRect, string text, IBrush brush)

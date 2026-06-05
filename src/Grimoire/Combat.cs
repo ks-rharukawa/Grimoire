@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Grimoire;
 
 // docs/card-operations.md の操作アーキタイプを CombatView に配線する戦闘モデル。
-// 第1段階: 基本対処「Probe Request」系のみ操作実装。filter/lookup/echo は後続 increment。
+// 実装済み operation: probe (基本対処) / filter (基本遮断)。lookup/echo は後続 increment。
 // View からは「カード i クリック」「スロット j クリック」「End Turn」を受け取り、
 // 描画は CombatView 側が本モデルの状態を読んで行う（model と view の分離）。
 
@@ -12,6 +12,7 @@ public enum CombatPhase
 {
     Idle,       // プレイヤーの手番。カード選択 / End Turn 可
     Probing,    // probe 使用中。スロットの応答を観測して診断クリック
+    Filtering,  // filter 使用中。バースト(悪性)レーンを選別して遮断
     Resolving,  // 効果適用の演出中（短時間）
     EnemyTurn,  // 敵の反撃演出
     Won,
@@ -38,8 +39,8 @@ public sealed class Card
         Kind = kind;
     }
 
-    // この increment で操作が実装済みなのは probe のみ。他 job は non-playable（dim 表示）。
-    public bool OperationImplemented => Kind == CardKind.Probe;
+    // 操作が実装済みのカード。未実装 job は non-playable（dim 表示）。
+    public bool OperationImplemented => Kind is CardKind.Probe or CardKind.Filter;
 }
 
 public sealed class Combat
@@ -53,7 +54,7 @@ public sealed class Combat
     public int EnemyHp { get; private set; } = EnemyHpMax;
     public int Energy { get; private set; } = EnergyMax;
 
-    // プレイヤーのブロック (StS 流: 被ダメージを吸収し、次の手番開始で 0 にリセット)。filter (#3) が生成。
+    // プレイヤーのブロック (StS 流: 被ダメージを吸収し、次の手番開始で 0 にリセット)。filter が生成。
     private const int StatCap = 9999;   // overflow / UI 崩れ防止の飽和上限
     public int PlayerBlock { get; private set; }
     public void AddBlock(int n) { if (n > 0) PlayerBlock = (int)Math.Min(StatCap, (long)PlayerBlock + n); }
@@ -130,7 +131,18 @@ public sealed class Combat
         }
     }
 
+    // ===== filter operation 状態 (card-operations.md アーキタイプ2) =====
+    // 複数レーンのうちバースト(悪性=攻撃流量)を見分け、それだけを遮断。色で正解を出さない(条件B)。
+    // tell はパケットの「密度」(バースト vs 散発) のみ。view が密度アニメに IsLaneMalicious を使う。
+    public const int LaneCount = 3;
+    private readonly bool[] _laneMalicious = new bool[LaneCount];
+    private readonly bool[] _laneFiltered = new bool[LaneCount];
+    public bool IsLaneMalicious(int i) => i >= 0 && i < LaneCount && _laneMalicious[i];
+    public bool IsLaneFiltered(int i) => i >= 0 && i < LaneCount && _laneFiltered[i];
+    public double FilterElapsed { get; private set; }
+
     // ===== 演出タイマ =====
+    public CardKind LastOp { get; private set; }    // 直近に使った操作の種別 (resolve バナーの出し分け)
     public bool LastSuccess { get; private set; }
     public int LastDamage { get; private set; }
     public int LastBlocked { get; private set; }
@@ -152,6 +164,10 @@ public sealed class Combat
         {
             case CombatPhase.Probing:
                 AdvanceProbe();
+                break;
+
+            case CombatPhase.Filtering:
+                FilterElapsed += 1.0 / 60.0;   // パケット密度アニメ用の経過時間
                 break;
 
             case CombatPhase.Resolving:
@@ -191,13 +207,18 @@ public sealed class Combat
         if (Phase != CombatPhase.Idle) return false;
         if (index < 0 || index >= _hand.Count) return false;
         var card = _hand[index];
-        if (!card.OperationImplemented) return false;   // filter/lookup/echo は後続
+        if (!card.OperationImplemented) return false;   // lookup/echo は後続
         if (Energy < card.Cost) return false;
 
         Energy -= card.Cost;
         _hand.RemoveAt(index);
         _discard.Add(card);             // 使用したカードは捨て山へ (quiz-cadence 決定3: 成否問わず)
-        StartProbe();
+        LastOp = card.Kind;
+        switch (card.Kind)
+        {
+            case CardKind.Probe: StartProbe(); break;
+            case CardKind.Filter: StartFilter(); break;
+        }
         return true;
     }
 
@@ -206,6 +227,58 @@ public sealed class Combat
         Phase = CombatPhase.Probing;
         OverloadedSlot = _rng.Next(SlotCount);
         Array.Clear(_slotProbe, 0, SlotCount);
+    }
+
+    private void StartFilter()
+    {
+        Phase = CombatPhase.Filtering;
+        FilterElapsed = 0;
+        Array.Clear(_laneFiltered, 0, LaneCount);
+        Array.Clear(_laneMalicious, 0, LaneCount);
+        // 1〜2 レーンを悪性(バースト)に。残りは散発(良性)＝必ず 1 本は通すべき正常通信が残る。
+        int k = 1 + _rng.Next(2);
+        var idx = new List<int>();
+        for (int i = 0; i < LaneCount; i++) idx.Add(i);
+        for (int picked = 0; picked < k; picked++)
+        {
+            int j = _rng.Next(idx.Count);
+            _laneMalicious[idx[j]] = true;
+            idx.RemoveAt(j);
+        }
+    }
+
+    public void ToggleLaneFilter(int lane)
+    {
+        if (Phase != CombatPhase.Filtering) return;
+        if (lane < 0 || lane >= LaneCount) return;
+        _laneFiltered[lane] = !_laneFiltered[lane];
+    }
+
+    // 適用: 遮断したレーンの集合が悪性レーンの集合と「過不足なく一致」したら成功。
+    // 全遮断や良性遮断は失敗（card-operations: フィルタの本質は選別であって全遮断ではない）。
+    public void CommitFilter()
+    {
+        if (Phase != CombatPhase.Filtering) return;
+        bool correct = true;
+        int maliciousCount = 0;
+        for (int i = 0; i < LaneCount; i++)
+        {
+            if (_laneMalicious[i]) maliciousCount++;
+            if (_laneFiltered[i] != _laneMalicious[i]) correct = false;
+        }
+        LastSuccess = correct;
+        Phase = CombatPhase.Resolving;
+        _resolveT = 0;
+        if (correct)
+        {
+            int block = 4 + maliciousCount * 2;   // 遮断した悪性レーン数に応じた Block
+            AddBlock(block);
+            LastDamage = block;                   // resolve バナーの見出し数値
+        }
+        else
+        {
+            LastDamage = 0;                       // 選別ミス = 不発 (quiz-cadence 決定3)
+        }
     }
 
     public void EndTurn()
@@ -333,6 +406,9 @@ public sealed class Combat
         _enemyT = 0;
         _enemyApplied = false;
         Array.Clear(_slotProbe, 0, SlotCount);
+        Array.Clear(_laneFiltered, 0, LaneCount);
+        Array.Clear(_laneMalicious, 0, LaneCount);
+        FilterElapsed = 0;
         BuildDeck();
         DrawToFull();
         Phase = CombatPhase.Idle;
