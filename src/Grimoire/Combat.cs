@@ -14,6 +14,7 @@ public enum CombatPhase
     Probing,    // probe 使用中。スロットの応答を観測して診断クリック
     Filtering,  // filter 使用中。バースト(悪性)レーンを選別して遮断
     Lookup,     // lookup 使用中。キャッシュTTL/権威の状態を読み解決経路を選ぶ
+    Echoing,    // echo 使用中。障害ノードだけに複製を振り分ける(シグネチャ)
     Resolving,  // 効果適用の演出中（短時間）
     EnemyTurn,  // 敵の反撃演出
     Won,
@@ -44,8 +45,8 @@ public sealed class Card
         Kind = kind;
     }
 
-    // 操作が実装済みのカード。未実装 job は non-playable（dim 表示）。
-    public bool OperationImplemented => Kind is CardKind.Probe or CardKind.Filter or CardKind.Lookup;
+    // 操作が実装済みのカード。
+    public bool OperationImplemented => Kind is CardKind.Probe or CardKind.Filter or CardKind.Lookup or CardKind.Echo;
 }
 
 public sealed class Combat
@@ -153,6 +154,17 @@ public sealed class Combat
     public double LookupTtl { get; private set; }    // 0..1 キャッシュ残TTL (CacheValid のみ >0、動的に減る)
     private double _lookupElapsed;
 
+    // ===== echo operation 状態 (card-operations.md アーキタイプ4 / シグネチャ) =====
+    // 自己完結図: echo 自身が複数の候補ノードを内包。障害(problem)ノードだけに複製を振り分ける。
+    // tell はノードの signal trace (障害=ジャグ波形 / 正常=フラット)。色で正解を出さない(条件B)。
+    // 判断対象の数が難度・順不同・精度不問・時間制限なし。全正解で複合効果、1つでも誤れば全不発。
+    public const int EchoTargetCount = 5;
+    private readonly bool[] _echoProblem = new bool[EchoTargetCount];
+    private readonly bool[] _echoMarked = new bool[EchoTargetCount];
+    public bool IsEchoProblem(int i) => i >= 0 && i < EchoTargetCount && _echoProblem[i];
+    public bool IsEchoMarked(int i) => i >= 0 && i < EchoTargetCount && _echoMarked[i];
+    public double EchoElapsed { get; private set; }
+
     // ===== 演出タイマ =====
     public CardKind LastOp { get; private set; }    // 直近に使った操作の種別 (resolve バナーの出し分け)
     public bool LastSuccess { get; private set; }
@@ -186,6 +198,10 @@ public sealed class Combat
                 _lookupElapsed += 1.0 / 60.0;
                 if (Scenario == LookupScenario.CacheValid)
                     LookupTtl = Math.Max(0.3, 1.0 - _lookupElapsed * 0.05);  // 動的に減るが有効を保つ
+                break;
+
+            case CombatPhase.Echoing:
+                EchoElapsed += 1.0 / 60.0;   // signal trace アニメ用
                 break;
 
             case CombatPhase.Resolving:
@@ -237,6 +253,7 @@ public sealed class Combat
             case CardKind.Probe: StartProbe(); break;
             case CardKind.Filter: StartFilter(); break;
             case CardKind.Lookup: StartLookup(); break;
+            case CardKind.Echo: StartEcho(); break;
         }
         return true;
     }
@@ -346,6 +363,57 @@ public sealed class Combat
         var top = _drawPile[^1];
         _drawPile.RemoveAt(_drawPile.Count - 1);
         _hand.Add(top);
+    }
+
+    // ===== echo operation (シグネチャ) =====
+
+    private void StartEcho()
+    {
+        Phase = CombatPhase.Echoing;
+        EchoElapsed = 0;
+        Array.Clear(_echoMarked, 0, EchoTargetCount);
+        Array.Clear(_echoProblem, 0, EchoTargetCount);
+        // 2〜3 ノードを障害(正解の振り分け先)に。判断対象の数が難度。
+        int k = 2 + _rng.Next(2);
+        var idx = new List<int>();
+        for (int i = 0; i < EchoTargetCount; i++) idx.Add(i);
+        for (int picked = 0; picked < k; picked++)
+        {
+            int j = _rng.Next(idx.Count);
+            _echoProblem[idx[j]] = true;
+            idx.RemoveAt(j);
+        }
+    }
+
+    public void ToggleEchoMark(int node)
+    {
+        if (Phase != CombatPhase.Echoing) return;
+        if (node < 0 || node >= EchoTargetCount) return;
+        _echoMarked[node] = !_echoMarked[node];   // 順不同・精度不問
+    }
+
+    // 発火: 振り分けた集合が障害集合と過不足なく一致したら複合効果。1つでも誤れば全不発(部分成功なし)。
+    public void CommitEcho()
+    {
+        if (Phase != CombatPhase.Echoing) return;
+        bool correct = true;
+        for (int i = 0; i < EchoTargetCount; i++)
+            if (_echoMarked[i] != _echoProblem[i]) correct = false;
+
+        LastSuccess = correct;
+        Phase = CombatPhase.Resolving;
+        _resolveT = 0;
+        if (correct)
+        {
+            LastDamage = 8;                                  // 複合効果: 障害源を削る
+            EnemyHp = Math.Max(0, EnemyHp - LastDamage);
+            AddBlock(6);                                     // + ブロック生成
+            AddEnemyStatus(StatusKind.Overload, -1);         // + 過負荷弱化
+        }
+        else
+        {
+            LastDamage = 0;                                  // 振り分けミス = 全不発
+        }
     }
 
     public void EndTurn()
@@ -478,6 +546,9 @@ public sealed class Combat
         FilterElapsed = 0;
         _lookupElapsed = 0;
         LookupTtl = 0;
+        Array.Clear(_echoProblem, 0, EchoTargetCount);
+        Array.Clear(_echoMarked, 0, EchoTargetCount);
+        EchoElapsed = 0;
         BuildDeck();
         DrawToFull();
         Phase = CombatPhase.Idle;

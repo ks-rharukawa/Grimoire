@@ -92,6 +92,16 @@ public class CombatView : Control
                 if (_combat.Hand[i].Kind == CardKind.Lookup && _combat.TryPlayCard(i)) break;
             for (int i = 0; i < 30; i++) _combat.Tick();
         }
+
+        // capture 用: echo operation の状態 (GRIMOIRE_CAPTURE_ECHO=1)
+        if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_ECHO") == "1")
+        {
+            for (int i = 0; i < _combat.Hand.Count; i++)
+                if (_combat.Hand[i].Kind == CardKind.Echo && _combat.TryPlayCard(i)) break;
+            for (int i = 0; i < 20; i++) _combat.Tick();
+            for (int i = 0; i < Combat.EchoTargetCount; i++)
+                if (_combat.IsEchoProblem(i)) _combat.ToggleEchoMark(i);   // 障害ノードを振り分けた状態
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -145,6 +155,14 @@ public class CombatView : Control
                 for (int i = 0; i < 3; i++)
                 {
                     if (LookupActionRect(i).Contains(pos)) { _combat.ResolveLookup((LookupAction)i); break; }
+                }
+                break;
+
+            case CombatPhase.Echoing:
+                if (EchoFireRect.Contains(pos)) { _combat.CommitEcho(); break; }
+                for (int i = 0; i < Combat.EchoTargetCount; i++)
+                {
+                    if (EchoNodeRect(i).Contains(pos)) { _combat.ToggleEchoMark(i); break; }
                 }
                 break;
 
@@ -225,6 +243,26 @@ public class CombatView : Control
         double startX = StageInnerLeft + (stageRight - StageInnerLeft - total) / 2;
         double y = StageTop + StageHeight - CaptionStripHeight - 42;
         return new Rect(startX + i * (w + gap), y, w, h);
+    }
+
+    // echo operation: 5 つの候補ノード + 発火ボタン
+    private Rect EchoNodeRect(int i)
+    {
+        const double w = 120, h = 64, gap = 18;
+        double total = Combat.EchoTargetCount * w + (Combat.EchoTargetCount - 1) * gap;
+        var stageRight = Bounds.Width - (BookFrameMargin + 20);
+        double startX = StageInnerLeft + (stageRight - StageInnerLeft - total) / 2;
+        double y = StageTop + 52;
+        return new Rect(startX + i * (w + gap), y, w, h);
+    }
+
+    private Rect EchoFireRect
+    {
+        get
+        {
+            var stageRight = Bounds.Width - (BookFrameMargin + 20);
+            return new Rect(stageRight - 130, StageTop + StageHeight - CaptionStripHeight - 42, 116, 32);
+        }
     }
 
     public override void Render(DrawingContext context)
@@ -596,6 +634,11 @@ public class CombatView : Control
                 DrawLookupOperation(context, stageRect);
                 break;
 
+            case CombatPhase.Echoing:
+                caption = "> シグネチャ | 障害ノード(ジャグ波形)だけに echo を振り分け → 発火";
+                DrawEchoOperation(context, stageRect);
+                break;
+
             case CombatPhase.Resolving:
                 bool ok = _combat.LastSuccess;
                 string banner;
@@ -608,6 +651,10 @@ public class CombatView : Control
                     case CardKind.Lookup:
                         caption = ok ? "> 名前解決成功 | カード +1" : "> 解決ミス | 不発";
                         banner = ok ? "解決成功! カード +1" : "解決ミス… 不発";
+                        break;
+                    case CardKind.Echo:
+                        caption = ok ? "> シグネチャ発動 | 複合効果" : "> 振り分けミス | 不発";
+                        banner = ok ? "シグネチャ発動! 障害源-8 / Block+6 / 過負荷弱化" : "振り分けミス… 不発";
                         break;
                     default:
                         caption = ok ? $"> 過負荷源を特定 | 弱化 -{_combat.LastDamage}" : "> 診断ミス | 不発";
@@ -834,6 +881,60 @@ public class CombatView : Control
                 FlowDirection.LeftToRight, Typeface.Default, 14, Palette.MidnightBrush);
             context.DrawText(bft, new Point(r.X + (r.Width - bft.Width) / 2, r.Y + (r.Height - bft.Height) / 2));
         }
+    }
+
+    // ===== echo operation (docs/card-operations.md アーキタイプ4 / シグネチャ) =====
+    // 自己完結図: 5 つの候補ノードのうち障害(ジャグ波形)だけに echo を振り分ける。色で正解を出さない(条件B)。
+    private void DrawEchoOperation(DrawingContext context, Rect stageRect)
+    {
+        var instr = new FormattedText("障害ノード(乱れた波形)を見分け、複製 echo を振り分けよ — 全正解で発火",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 13, Palette.ParchmentBrush);
+        context.DrawText(instr, new Point(stageRect.X + (stageRect.Width - instr.Width) / 2, StageTop + 8));
+
+        int shift = (int)(_combat.EchoElapsed * 6);
+        for (int i = 0; i < Combat.EchoTargetCount; i++)
+        {
+            var r = EchoNodeRect(i);
+            bool prob = _combat.IsEchoProblem(i);
+            bool marked = _combat.IsEchoMarked(i);
+
+            // ノード筐体 (全ノード同一見た目)
+            context.FillRectangle(Palette.MidnightDeepBrush, r);
+            context.DrawRectangle(null,
+                new Pen(marked ? Palette.EtherealCyanBrush : Palette.ArcaneGoldDimBrush, marked ? 2 : 1), r);
+
+            // signal trace — 障害=ジャグ波形 / 正常=フラット。tell はこれだけ (条件B)。
+            double cy = r.Y + 24;
+            const int pts = 9;
+            double stepX = (r.Width - 20) / (pts - 1);
+            for (int k = 0; k < pts; k++)
+            {
+                double x = r.X + 10 + k * stepX;
+                double v = prob ? (((k + shift) % 2 == 0) ? -9 : 9) : 0;
+                context.FillRectangle(Palette.ArcaneGoldBrush, new Rect(x - 1, cy + v - 1, 3, 3));
+            }
+
+            var lbl = new FormattedText($"node {i + 1}", CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 11, Palette.ParchmentBrush);
+            context.DrawText(lbl, new Point(r.X + (r.Width - lbl.Width) / 2, r.Bottom - 16));
+
+            // marked: echo リング
+            if (marked)
+            {
+                var em = new FormattedText("((echo))", CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight, Typeface.Default, 11, Palette.EtherealCyanBrush);
+                context.DrawText(em, new Point(r.X + (r.Width - em.Width) / 2, r.Y + 3));
+            }
+        }
+
+        // 発火ボタン
+        var fire = EchoFireRect;
+        context.FillRectangle(Palette.MidnightDeepBrush, new Rect(fire.X + 2, fire.Y + 2, fire.Width, fire.Height));
+        context.FillRectangle(Palette.ParchmentAgedBrush, fire);
+        context.DrawRectangle(null, new Pen(Palette.ArcaneGoldBrush, 2), fire);
+        var fireFt = new FormattedText("発火", CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 15, Palette.MidnightBrush);
+        context.DrawText(fireFt, new Point(fire.X + (fire.Width - fireFt.Width) / 2, fire.Y + (fire.Height - fireFt.Height) / 2));
     }
 
     private static void DrawCenterBanner(DrawingContext context, Rect stageRect, string text, IBrush brush)
