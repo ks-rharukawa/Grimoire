@@ -10,12 +10,16 @@ public class GameView : Decorator
     private RunState _run = new();
     private readonly Random _rng = new();
 
-    private const int TargetBattles = 3;   // #7 仮の終端。#11 でボス戦を終端にする。
-
     public GameView()
     {
-        if (CaptureWantsCombat()) StartBattle();   // capture は戦闘画面を直接表示
+        if (CaptureWantsCombat()) StartCaptureBattle();   // capture は戦闘画面を直接表示
         else ShowMap();
+    }
+
+    private void StartCaptureBattle()
+    {
+        var combat = new Combat(_run.Deck, _run.PlayerHp, EnemyKind.OverloadServer);
+        Child = new CombatView(combat);
     }
 
     // GRIMOIRE_CAPTURE_*/START_COMBAT が立っていれば戦闘から開始 (capture 用)
@@ -34,27 +38,49 @@ public class GameView : Decorator
     private void ShowMap()
     {
         var map = new RunMapView(_run);
-        map.Proceed = StartBattle;
+        map.NodeSelected = OnNodeSelected;
         Child = map;
     }
 
-    private void StartBattle()
+    private void OnNodeSelected(MapNode node)
     {
-        var enemy = (EnemyKind)_rng.Next(4);
-        var combat = new Combat(_run.Deck, _run.PlayerHp, enemy);
+        switch (node.Type)
+        {
+            case MapNodeType.Rest:
+                _run.Map.Advance(node);
+                _run.PlayerHp = Math.Min(_run.PlayerHpMax, _run.PlayerHp + 8);  // #10 で休憩画面に。今は即時回復
+                ShowMap();
+                break;
+            default:   // Battle / Elite / Boss → 戦闘
+                StartBattle(node);
+                break;
+        }
+    }
+
+    private void StartBattle(MapNode node)
+    {
+        var combat = new Combat(_run.Deck, _run.PlayerHp, EnemyForNode(node));
         var cv = new CombatView(combat);
-        cv.Finished = _ => OnBattleFinished(combat);
+        cv.Finished = _ => OnBattleFinished(combat, node);
         Child = cv;
     }
 
-    private void OnBattleFinished(Combat combat)
+    private EnemyKind EnemyForNode(MapNode node) => node.Type switch
+    {
+        MapNodeType.Elite => EnemyKind.RequestFlood,     // 精鋭は逓増型 (#11 で専用調整)
+        MapNodeType.Boss  => EnemyKind.OverloadServer,   // #11 で専用ボスに置き換え
+        _ => (EnemyKind)_rng.Next(4),
+    };
+
+    private void OnBattleFinished(Combat combat, MapNode node)
     {
         _run.PlayerHp = combat.PlayerHp;   // HP はラン中持続
         if (combat.Victory)
         {
             _run.BattlesWon++;
+            _run.Map.Advance(node);
             // #9 でここに戦闘後3択 (RewardView) を挟む。
-            if (_run.BattlesWon >= TargetBattles) ShowResult(victory: true);
+            if (node.Type == MapNodeType.Boss) ShowResult(victory: true);
             else ShowMap();
         }
         else

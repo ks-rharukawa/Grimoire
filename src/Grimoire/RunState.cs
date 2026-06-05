@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Grimoire;
@@ -12,12 +13,14 @@ public sealed class RunState
     public int PlayerHp { get; set; }       // 戦闘をまたいで持続 (回復は休憩ノード #10)
     public List<Card> Deck { get; }         // 所持カード (戦闘後3択 #9 で増える)
     public int BattlesWon { get; set; }
+    public RunMap Map { get; }              // StS 風の分岐マップ (進行は Map が保持)
 
     public RunState()
     {
         PlayerHpMax = PlayerHpMaxBase;
         PlayerHp = PlayerHpMax;
         Deck = StarterDeck();
+        Map = new RunMap(new Random());
     }
 
     // classes.md 決定5: 初期デッキ10枚 (Probe4 / Filter3 / Lookup2 / Echo1)
