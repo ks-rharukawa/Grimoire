@@ -24,3 +24,4 @@
 | ファイル | 役割 |
 |---|---|
 | [style-guide.md](style-guide.md) | visual / UX 仕様（カラーパレット・カード仕様・レイアウト等）。`design/` 配下の参照画像から抽出した、procedural 実装可能な style spec |
+| [card-operations.md](card-operations.md) | カード操作デザイン（最初の4 job）。`quiz-cadence.md` 決定1「操作型」と `classes.md` 決定5「初期デッキ4 job」を実装可能な操作アーキタイプに落とした spec |
