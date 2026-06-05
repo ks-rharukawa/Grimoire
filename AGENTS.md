@@ -76,11 +76,15 @@
 | 環境変数 | 動作 | 用途 |
 |---|---|---|
 | `GRIMOIRE_CAPTURE=<path>` | ヘッドレス Avalonia で CombatView を 1280x720 で描画して PNG 保存して終了 | CI 向け / 高速だが実機とフォント解決が違う可能性あり |
-| `GRIMOIRE_LIVE_CAPTURE=<path>` | 実機 Window を開いて 800ms 後に Window 内容を PNG 保存して終了 | macOS native の Skia / フォント解決で取れる、これが正 |
+| `GRIMOIRE_LIVE_CAPTURE=<path>` | 実機 Window を開いて 800ms 後に Window 内容を PNG 保存して終了 | macOS native の Skia / フォント解決で取れる、これが正。**#7 以降は GameView 経由で既定はマップ画面**を撮る |
+| `GRIMOIRE_START_COMBAT=1` | GameView を起動時に戦闘画面から始める（マップを飛ばす） | 戦闘画面の capture に必須（idle 戦闘を撮る） |
 | `GRIMOIRE_FONT_PROBE=1` | CombatView の左上にフォント切り分け probe を重ねて表示 | FontFamily 指定が効いているか確認 |
-| `GRIMOIRE_CAPTURE_PROBE=1` | 起動時に probe カードを使用し probe operation の途中状態にする | 戦闘の Probing phase（スロット応答観測）を capture で目視 |
+| `GRIMOIRE_CAPTURE_PROBE=1` | 起動時に probe カードを使用し probe operation の途中状態にする（戦闘から開始） | 戦闘の Probing phase（スロット応答観測）を capture で目視 |
+| `GRIMOIRE_CAPTURE_FILTER/LOOKUP/ECHO=1` | 各 operation の途中状態にする（戦闘から開始） | filter/lookup/echo operation を capture で目視 |
 
-使い方: `cd src/Grimoire && GRIMOIRE_LIVE_CAPTURE=/tmp/foo.png dotnet run`
+使い方:
+- マップ画面: `cd src/Grimoire && GRIMOIRE_LIVE_CAPTURE=/tmp/foo.png dotnet run`
+- 戦闘画面: `GRIMOIRE_START_COMBAT=1 GRIMOIRE_LIVE_CAPTURE=/tmp/foo.png dotnet run`
 
 ## サブエージェント一覧
 

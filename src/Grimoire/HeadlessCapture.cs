@@ -15,7 +15,8 @@ public static class HeadlessCapture
         var outPath = Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE");
         if (string.IsNullOrEmpty(outPath)) return false;
 
-        var view = new CombatView
+        var combat = new Combat(RunState.StarterDeck(), RunState.PlayerHpMaxBase, EnemyKind.OverloadServer);
+        var view = new CombatView(combat)
         {
             Width = 1280,
             Height = 720,

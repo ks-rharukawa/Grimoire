@@ -66,7 +66,7 @@ public sealed class Combat
     public const int PlayerHpMax = 30;
     public const int EnergyMax = 3;
 
-    public int PlayerHp { get; private set; } = PlayerHpMax;
+    public int PlayerHp { get; private set; }
     public int Energy { get; private set; } = EnergyMax;
 
     // 敵 (種別ごとに HP / 名前 / intent が変わる)
@@ -118,10 +118,13 @@ public sealed class Combat
     public int DrawPileCount => _drawPile.Count;
     public int DiscardPileCount => _discard.Count;
 
-    public Combat()
+    // ラン (RunState) から所持デッキ・現在HP・敵種別を受け取って 1 戦闘を構成する。
+    // 戦闘はデッキの「コピー」を引く山にするので RunState.Deck は変化しない。
+    public Combat(IReadOnlyList<Card> deck, int startHp, EnemyKind enemy)
     {
-        SetupEnemy((EnemyKind)_rng.Next(4));   // #7 でマップが種別を指定するまでは random
-        BuildDeck();
+        PlayerHp = Math.Clamp(startHp, 1, PlayerHpMax);
+        SetupEnemy(enemy);
+        BuildDeck(deck);
         DrawToFull();
     }
 
@@ -587,15 +590,12 @@ public sealed class Combat
 
     // ===== デッキ操作 =====
 
-    private void BuildDeck()
+    private void BuildDeck(IReadOnlyList<Card> source)
     {
         _drawPile.Clear();
         _hand.Clear();
         _discard.Clear();
-        for (int i = 0; i < 4; i++) _drawPile.Add(new Card("Probe Request", 1, "過負荷源を\n診断し弱化", CardKind.Probe));
-        for (int i = 0; i < 3; i++) _drawPile.Add(new Card("Packet Filter", 1, "悪性流量を\n選別遮断", CardKind.Filter));
-        for (int i = 0; i < 2; i++) _drawPile.Add(new Card("Lookup",        1, "名前解決で\n+1 ドロー", CardKind.Lookup));
-        _drawPile.Add(new Card("Echo Reply", 2, "複製で\n複数対処", CardKind.Echo));
+        _drawPile.AddRange(source);    // Card は不変なので参照共有で安全 (RunState.Deck は変えない)
         Shuffle(_drawPile);
     }
 
@@ -631,32 +631,7 @@ public sealed class Combat
         }
     }
 
-    // ===== Won/Defeated → 再戦 =====
-
-    public void Restart()
-    {
-        PlayerHp = PlayerHpMax;
-        Energy = EnergyMax;
-        PlayerBlock = 0;
-        PlayerLatency = 0;
-        SetupEnemy((EnemyKind)_rng.Next(4));   // HP/Max/状態/intent をセット
-        LastSuccess = false;
-        LastDamage = 0;
-        LastBlocked = 0;
-        _resolveT = 0;
-        _enemyT = 0;
-        _enemyApplied = false;
-        Array.Clear(_slotProbe, 0, SlotCount);
-        Array.Clear(_laneFiltered, 0, LaneCount);
-        Array.Clear(_laneMalicious, 0, LaneCount);
-        FilterElapsed = 0;
-        _lookupElapsed = 0;
-        LookupTtl = 0;
-        Array.Clear(_echoProblem, 0, EchoTargetCount);
-        Array.Clear(_echoMarked, 0, EchoTargetCount);
-        EchoElapsed = 0;
-        BuildDeck();
-        DrawToFull();
-        Phase = CombatPhase.Idle;
-    }
+    // 戦闘の終了状態 (GameView がラン遷移の判定に使う)
+    public bool IsOver => Phase is CombatPhase.Won or CombatPhase.Defeated;
+    public bool Victory => Phase == CombatPhase.Won;
 }

@@ -28,7 +28,10 @@ public class CombatView : Control
     private const double CardWidth = 160;
     private const double CardHeight = 220;
 
-    private readonly Combat _combat = new();
+    private readonly Combat _combat;
+
+    // 戦闘終了時に GameView へ結果を返す (Won/Defeated)。
+    public Action<CombatPhase>? Finished;
 
     private enum CardIcon { ProbeRadar, ShieldFilter, EchoLoop, LookupGlass, RetryArrow }
 
@@ -46,8 +49,10 @@ public class CombatView : Control
     private double _packetProgress;
     private double _pulse;
 
-    public CombatView()
+    public CombatView(Combat combat)
     {
+        _combat = combat;
+
         // ピクセル規律: 形状は anti-alias 抑止 (style-guide §4)。
         // テキスト (特に日本語) は AA を有効にしないと読めないので default のまま。
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
@@ -168,7 +173,7 @@ public class CombatView : Control
 
             case CombatPhase.Won:
             case CombatPhase.Defeated:
-                _combat.Restart();
+                Finished?.Invoke(_combat.Phase);   // ラン遷移は GameView が担当
                 break;
         }
 
@@ -296,7 +301,7 @@ public class CombatView : Control
             FlowDirection.LeftToRight, Typeface.Default, 40, brush);
         context.DrawText(ft, new Point((Bounds.Width - ft.Width) / 2, Bounds.Height / 2 - 50));
 
-        var sub = new FormattedText("クリックで再戦", CultureInfo.CurrentCulture,
+        var sub = new FormattedText("クリックで進む", CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 18, Palette.ParchmentBrush);
         context.DrawText(sub, new Point((Bounds.Width - sub.Width) / 2, Bounds.Height / 2 + 16));
     }

@@ -8,5 +8,5 @@
         Width="1280" Height="720"
         Background="#050715"
         Title="Grimoire">
-    <local:CombatView />
+    <local:GameView />
 </Window>
