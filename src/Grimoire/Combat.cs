@@ -25,6 +25,18 @@ public enum CombatPhase
 public enum LookupScenario { CacheValid, CacheExpired, NxDomain }
 public enum LookupAction { Cache, Authoritative, GiveUp }
 
+// 敵 (classes.md 決定4: 障害シナリオの代理)。4 種 + 多彩な intent。
+public enum EnemyKind { OverloadServer, AttackTraffic, RequestFlood, CongestionRouter }
+public enum IntentKind { Attack, MultiAttack, Buff, Debuff, Defend }
+
+public readonly struct EnemyIntent
+{
+    public readonly IntentKind Kind;
+    public readonly int Value;
+    public readonly int Hits;
+    public EnemyIntent(IntentKind kind, int value, int hits = 1) { Kind = kind; Value = value; Hits = hits; }
+}
+
 public enum CardKind { Probe, Filter, Lookup, Echo }
 
 // classes.md 障害状態語彙。敵に積む状態でゲームメカニクスとネットワーク概念を接続する。
@@ -52,18 +64,27 @@ public sealed class Card
 public sealed class Combat
 {
     public const int PlayerHpMax = 30;
-    public const int EnemyHpMax = 30;
     public const int EnergyMax = 3;
-    public const int BaseIntent = 5;
 
     public int PlayerHp { get; private set; } = PlayerHpMax;
-    public int EnemyHp { get; private set; } = EnemyHpMax;
     public int Energy { get; private set; } = EnergyMax;
+
+    // 敵 (種別ごとに HP / 名前 / intent が変わる)
+    public int EnemyHpMax { get; private set; } = 30;
+    public int EnemyHp { get; private set; }
+    public string EnemyName { get; private set; } = "";
+    public int EnemyBlock { get; private set; }
+    public EnemyIntent CurrentIntent { get; private set; }
+    private EnemyKind _enemyKind;
+    private int _turnCount;
 
     // プレイヤーのブロック (StS 流: 被ダメージを吸収し、次の手番開始で 0 にリセット)。filter が生成。
     private const int StatCap = 9999;   // overflow / UI 崩れ防止の飽和上限
     public int PlayerBlock { get; private set; }
     public void AddBlock(int n) { if (n > 0) PlayerBlock = (int)Math.Min(StatCap, (long)PlayerBlock + n); }
+
+    // プレイヤーの障害状態(デバフ): 遅延 = 次の手番のエネルギーを絞る。敵の Debuff intent が付与。
+    public int PlayerLatency { get; private set; }
 
     // ===== 敵の障害状態 (classes.md 障害状態語彙) =====
     // 過負荷 = 被ダメージ増 を IntentDamage に反映。他状態は #3-5 の operation が積む枠組み。
@@ -85,7 +106,6 @@ public sealed class Combat
         }
     }
     public int Overload => EnemyStatusOf(StatusKind.Overload);
-    public int IntentDamage => BaseIntent + Overload;
 
     public CombatPhase Phase { get; private set; } = CombatPhase.Idle;
 
@@ -100,15 +120,66 @@ public sealed class Combat
 
     public Combat()
     {
-        SetupEnemy();
+        SetupEnemy((EnemyKind)_rng.Next(4));   // #7 でマップが種別を指定するまでは random
         BuildDeck();
         DrawToFull();
     }
 
-    private void SetupEnemy()
+    private void SetupEnemy(EnemyKind kind)
     {
+        _enemyKind = kind;
         _enemyStatus.Clear();
-        AddEnemyStatus(StatusKind.Overload, 3);   // 初期障害シナリオ: 過負荷 3 段
+        EnemyBlock = 0;
+        _turnCount = 0;
+        switch (kind)
+        {
+            case EnemyKind.OverloadServer:
+                EnemyName = "過負荷サーバ / Overload Server";
+                EnemyHpMax = 30;
+                AddEnemyStatus(StatusKind.Overload, 3);
+                break;
+            case EnemyKind.AttackTraffic:
+                EnemyName = "攻撃トラフィック / Attack Traffic";
+                EnemyHpMax = 24;
+                AddEnemyStatus(StatusKind.AttackTraffic, 1);
+                break;
+            case EnemyKind.RequestFlood:
+                EnemyName = "リクエスト殺到 / Request Flood";
+                EnemyHpMax = 34;
+                break;
+            case EnemyKind.CongestionRouter:
+                EnemyName = "輻輳ルータ / Congestion Router";
+                EnemyHpMax = 28;
+                AddEnemyStatus(StatusKind.Congestion, 2);
+                break;
+        }
+        EnemyHp = EnemyHpMax;
+        RollIntent();
+    }
+
+    // 敵が次の手番に行う行動を決める (telegraph)。種別ごとの行動パターン。
+    private void RollIntent()
+    {
+        int ov = Overload;
+        CurrentIntent = _enemyKind switch
+        {
+            EnemyKind.OverloadServer => _rng.NextDouble() < 0.7
+                ? new EnemyIntent(IntentKind.Attack, 5 + ov)
+                : new EnemyIntent(IntentKind.Buff, 1),
+            EnemyKind.AttackTraffic => _rng.NextDouble() < 0.6
+                ? new EnemyIntent(IntentKind.MultiAttack, 3, 3)
+                : new EnemyIntent(IntentKind.Attack, 7),
+            EnemyKind.RequestFlood => (_turnCount % 2 == 0)
+                ? new EnemyIntent(IntentKind.Buff, 1)               // 1 ターンおきに自己強化 → 攻撃が逓増
+                : new EnemyIntent(IntentKind.Attack, 4 + ov),
+            EnemyKind.CongestionRouter => _rng.Next(3) switch
+            {
+                0 => new EnemyIntent(IntentKind.Debuff, 2),         // 遅延 2 をプレイヤーに付与
+                1 => new EnemyIntent(IntentKind.Attack, 6),
+                _ => new EnemyIntent(IntentKind.Defend, 6),         // 敵ブロック
+            },
+            _ => new EnemyIntent(IntentKind.Attack, 5),
+        };
     }
 
     // ===== probe operation 状態 =====
@@ -211,7 +282,7 @@ public sealed class Combat
 
             case CombatPhase.EnemyTurn:
                 _enemyT += 1.0 / 60.0;
-                if (_enemyT >= EnemyTurnSeconds * EnemyHitAt && !_enemyApplied) ApplyEnemyDamage();
+                if (_enemyT >= EnemyTurnSeconds * EnemyHitAt && !_enemyApplied) ApplyEnemyIntent();
                 if (_enemyT >= EnemyTurnSeconds) FinishEnemyTurn();
                 break;
         }
@@ -405,8 +476,7 @@ public sealed class Combat
         _resolveT = 0;
         if (correct)
         {
-            LastDamage = 8;                                  // 複合効果: 障害源を削る
-            EnemyHp = Math.Max(0, EnemyHp - LastDamage);
+            LastDamage = DamageEnemy(8);                     // 複合効果: 障害源を削る (実通過分を表示)
             AddBlock(6);                                     // + ブロック生成
             AddEnemyStatus(StatusKind.Overload, -1);         // + 過負荷弱化
         }
@@ -420,6 +490,7 @@ public sealed class Combat
     {
         if (Phase != CombatPhase.Idle) return;
         DiscardHand();                  // 残った手札は捨て山へ (StS 流: ターン終了で手札を流す)
+        EnemyBlock = 0;                 // 敵ブロックは敵の手番開始でリセット (StS 流)
         Phase = CombatPhase.EnemyTurn;
         _enemyT = 0;
         _enemyApplied = false;
@@ -438,9 +509,8 @@ public sealed class Combat
         _resolveT = 0;
         if (LastSuccess)
         {
-            LastDamage = 6;
-            EnemyHp = Math.Max(0, EnemyHp - LastDamage);
-            AddEnemyStatus(StatusKind.Overload, -1);   // 過負荷を 1 段弱化（敵 IntentDamage も下がる）
+            LastDamage = DamageEnemy(6);                // 敵ブロックを抜けて実際に通った分を表示
+            AddEnemyStatus(StatusKind.Overload, -1);    // 過負荷を 1 段弱化
         }
         else
         {
@@ -455,15 +525,48 @@ public sealed class Combat
 
     // ===== EnemyTurn phase =====
 
-    private void ApplyEnemyDamage()
+    private void ApplyEnemyIntent()
     {
-        int incoming = IntentDamage;
-        int absorbed = Math.Min(PlayerBlock, incoming);   // ブロックで吸収
-        PlayerBlock -= absorbed;
-        LastBlocked = absorbed;
-        LastDamage = incoming - absorbed;                 // HP に通った分
-        PlayerHp = Math.Max(0, PlayerHp - LastDamage);
+        LastDamage = 0;
+        LastBlocked = 0;
+        switch (CurrentIntent.Kind)
+        {
+            case IntentKind.Attack:
+                DamagePlayer(CurrentIntent.Value);
+                break;
+            case IntentKind.MultiAttack:
+                for (int h = 0; h < CurrentIntent.Hits; h++) DamagePlayer(CurrentIntent.Value);
+                break;
+            case IntentKind.Buff:
+                AddEnemyStatus(StatusKind.Overload, CurrentIntent.Value);    // 自己強化 (攻撃逓増)
+                break;
+            case IntentKind.Debuff:
+                PlayerLatency = (int)Math.Min(StatCap, (long)PlayerLatency + CurrentIntent.Value);
+                break;
+            case IntentKind.Defend:
+                EnemyBlock = (int)Math.Min(StatCap, (long)EnemyBlock + CurrentIntent.Value);
+                break;
+        }
         _enemyApplied = true;
+    }
+
+    private void DamagePlayer(int incoming)
+    {
+        int absorbed = Math.Min(PlayerBlock, incoming);   // プレイヤーブロックで吸収
+        PlayerBlock -= absorbed;
+        LastBlocked += absorbed;
+        int through = incoming - absorbed;
+        LastDamage += through;
+        PlayerHp = Math.Max(0, PlayerHp - through);
+    }
+
+    private int DamageEnemy(int incoming)
+    {
+        int absorbed = Math.Min(EnemyBlock, incoming);    // 敵ブロックで吸収 (Defend intent 由来)
+        EnemyBlock -= absorbed;
+        int through = incoming - absorbed;
+        EnemyHp = Math.Max(0, EnemyHp - through);
+        return through;                                   // 実際に HP へ通った分
     }
 
     private void FinishEnemyTurn()
@@ -473,9 +576,12 @@ public sealed class Combat
             Phase = CombatPhase.Defeated;
             return;
         }
-        PlayerBlock = 0;                // ブロックは次の手番開始でリセット (StS 流)
-        Energy = EnergyMax;
-        DrawToFull();                   // 新しい手番の手札を引く
+        PlayerBlock = 0;                                  // プレイヤーブロックは手番開始でリセット
+        Energy = Math.Max(0, EnergyMax - PlayerLatency);  // 遅延でエネルギーを絞る
+        PlayerLatency = Math.Max(0, PlayerLatency - 1);   // 遅延は 1/ターン 減衰
+        DrawToFull();
+        _turnCount++;
+        RollIntent();                                     // 次の敵行動を telegraph
         Phase = CombatPhase.Idle;
     }
 
@@ -530,10 +636,10 @@ public sealed class Combat
     public void Restart()
     {
         PlayerHp = PlayerHpMax;
-        EnemyHp = EnemyHpMax;
         Energy = EnergyMax;
         PlayerBlock = 0;
-        SetupEnemy();
+        PlayerLatency = 0;
+        SetupEnemy((EnemyKind)_rng.Next(4));   // HP/Max/状態/intent をセット
         LastSuccess = false;
         LastDamage = 0;
         LastBlocked = 0;

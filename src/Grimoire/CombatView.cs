@@ -509,29 +509,51 @@ public class CombatView : Control
 
         DrawServerRack(context, centerX - 40, EnemyAreaTop + 5, 80, 110);
 
-        var nameFt = new FormattedText("障害サーバ / Overload Server", CultureInfo.CurrentCulture,
+        var nameFt = new FormattedText(_combat.EnemyName, CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight, Typeface.Default, 14, Palette.CrimsonBrush);
         context.DrawText(nameFt, new Point(areaLeft + 20, EnemyAreaTop + 8));
 
-        DrawBar(context, areaLeft + 20, EnemyAreaTop + 36, 240, 14, _combat.EnemyHp, Combat.EnemyHpMax,
-            Palette.CrimsonBrush, $"HP {_combat.EnemyHp}/{Combat.EnemyHpMax}");
+        DrawBar(context, areaLeft + 20, EnemyAreaTop + 34, 240, 14, _combat.EnemyHp, _combat.EnemyHpMax,
+            Palette.CrimsonBrush, $"HP {_combat.EnemyHp}/{_combat.EnemyHpMax}");
 
-        DrawIntent(context, areaLeft + 20, EnemyAreaTop + 64, _combat.IntentDamage);
+        if (_combat.EnemyBlock > 0)
+            DrawBlockChip(context, areaLeft + 350, EnemyAreaTop + 30, _combat.EnemyBlock);
 
-        // 障害状態チップ (classes.md 障害状態語彙) — operation で積む / 弱化する
-        double chipX = areaLeft + 110;
+        // 敵の意図 (telegraph): 種別ごとに多彩な行動
+        DrawIntentDisplay(context, areaLeft + 20, EnemyAreaTop + 58, _combat.CurrentIntent);
+
+        // 障害状態チップ (classes.md 障害状態語彙)
+        double chipX = areaLeft + 20;
         foreach (var (kind, stacks) in _combat.ActiveEnemyStatuses)
         {
             var text = $"{StatusLabel(kind)} x{stacks}";
             var ft = new FormattedText(text, CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight, Typeface.Default, 12, Palette.MidnightBrush);
             var chipW = ft.Width + 14;
-            var chipRect = new Rect(chipX, EnemyAreaTop + 62, chipW, 18);
+            var chipRect = new Rect(chipX, EnemyAreaTop + 80, chipW, 18);
             context.FillRectangle(Palette.ArcaneGoldBrush, chipRect);
             context.DrawRectangle(null, new Pen(Palette.ArcaneGoldDimBrush, 1), chipRect);
-            context.DrawText(ft, new Point(chipX + 7, EnemyAreaTop + 63));
+            context.DrawText(ft, new Point(chipX + 7, EnemyAreaTop + 81));
             chipX += chipW + 8;
         }
+    }
+
+    private static void DrawIntentDisplay(DrawingContext context, double x, double y, EnemyIntent it)
+    {
+        string text;
+        IBrush brush;
+        switch (it.Kind)
+        {
+            case IntentKind.Attack:      text = $"攻撃 -{it.Value}";              brush = Palette.CrimsonBrush; break;
+            case IntentKind.MultiAttack: text = $"連撃 -{it.Value}×{it.Hits}";    brush = Palette.CrimsonBrush; break;
+            case IntentKind.Buff:        text = $"自己強化 +{it.Value}";          brush = Palette.ArcaneGoldBrush; break;
+            case IntentKind.Debuff:      text = $"遅延付与 +{it.Value}";          brush = Palette.EtherealCyanBrush; break;
+            case IntentKind.Defend:      text = $"防御 +{it.Value}";              brush = Palette.EtherealCyanBrush; break;
+            default:                     text = "?";                              brush = Palette.ParchmentBrush; break;
+        }
+        var ft = new FormattedText("意図: " + text, CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight, Typeface.Default, 14, brush);
+        context.DrawText(ft, new Point(x, y));
     }
 
     private static string StatusLabel(StatusKind k) => k switch
@@ -666,16 +688,9 @@ public class CombatView : Control
                 break;
 
             case CombatPhase.EnemyTurn:
-                caption = "> 敵の反撃";
+                caption = "> 敵のターン";
                 DrawIdleTopology(context, stageRect);
-                string hitMsg;
-                if (!_combat.EnemyHitApplied)
-                    hitMsg = "敵の反撃…";                       // 着弾前は数値を出さない (古い値の誤表示を防ぐ)
-                else if (_combat.LastBlocked > 0)
-                    hitMsg = $"敵の反撃  -{_combat.LastDamage} HP  ({_combat.LastBlocked} ブロックで吸収)";
-                else
-                    hitMsg = $"敵の反撃  -{_combat.LastDamage} HP";
-                DrawCenterBanner(context, stageRect, hitMsg, Palette.CrimsonBrush);
+                DrawCenterBanner(context, stageRect, EnemyTurnMessage(), Palette.CrimsonBrush);
                 break;
 
             default: // Idle / Won / Defeated
@@ -690,6 +705,21 @@ public class CombatView : Control
     }
 
     // 静的トポロジ (ambient / Idle)。旧 DrawStage の図。
+    private string EnemyTurnMessage()
+    {
+        if (!_combat.EnemyHitApplied) return "敵のターン…";
+        switch (_combat.CurrentIntent.Kind)
+        {
+            case IntentKind.Buff:   return "敵が自己強化した";
+            case IntentKind.Debuff: return "遅延を受けた (次の手番のエネルギー減)";
+            case IntentKind.Defend: return "敵が防御を固めた";
+            default:
+                return _combat.LastBlocked > 0
+                    ? $"敵の攻撃  -{_combat.LastDamage} HP  ({_combat.LastBlocked} ブロックで吸収)"
+                    : $"敵の攻撃  -{_combat.LastDamage} HP";
+        }
+    }
+
     private void DrawIdleTopology(DrawingContext context, Rect stageRect)
     {
         var lineY = StageTop + (StageHeight - CaptionStripHeight) / 2;
@@ -1093,6 +1123,14 @@ public class CombatView : Control
             CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 12, Palette.ParchmentBrush);
         context.DrawText(pileFt, new Point(areaLeft + 600, PlayerStripTop + 18));
 
+        // 遅延デバフ (敵が付与、次の手番のエネルギーを絞る)
+        if (_combat.PlayerLatency > 0)
+        {
+            var latFt = new FormattedText($"遅延 x{_combat.PlayerLatency}", CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, Typeface.Default, 12, Palette.CrimsonBrush);
+            context.DrawText(latFt, new Point(areaLeft + 600, PlayerStripTop + 2));
+        }
+
         DrawEndTurnButton(context, EndTurnRect, _combat.Phase == CombatPhase.Idle);
     }
 
@@ -1339,17 +1377,4 @@ public class CombatView : Control
         context.DrawText(ft, new Point(x + w + 8, y - 1));
     }
 
-    private static void DrawIntent(DrawingContext context, double x, double y, int damage)
-    {
-        var gold = Palette.ArcaneGoldBrush;
-        context.FillRectangle(gold, new Rect(x + 7, y, 2, 12));
-        context.FillRectangle(gold, new Rect(x + 6, y + 1, 4, 1));
-        context.FillRectangle(gold, new Rect(x + 5, y + 11, 6, 1));
-        context.FillRectangle(gold, new Rect(x + 3, y + 12, 10, 3));
-        context.FillRectangle(gold, new Rect(x + 7, y + 15, 2, 4));
-        context.FillRectangle(Palette.ArcaneGoldDimBrush, new Rect(x + 7, y + 19, 2, 1));
-        var ft = new FormattedText($"-{damage}", CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, Typeface.Default, 16, Palette.CrimsonBrush);
-        context.DrawText(ft, new Point(x + 22, y + 2));
-    }
 }
