@@ -70,7 +70,8 @@ public class CombatView : Control
         // capture 用: probe operation 中の状態を撮るためのフック (GRIMOIRE_CAPTURE_PROBE=1)
         if (Environment.GetEnvironmentVariable("GRIMOIRE_CAPTURE_PROBE") == "1")
         {
-            _combat.TryPlayCard(0);
+            for (int i = 0; i < _combat.Hand.Count; i++)
+                if (_combat.Hand[i].OperationImplemented && _combat.TryPlayCard(i)) break;
             for (int i = 0; i < 60; i++) _combat.Tick();   // 健全スロット帰還 + 過負荷停滞まで進める
         }
     }
@@ -752,6 +753,10 @@ public class CombatView : Control
             Palette.LimeGreenBrush, $"HP {_combat.PlayerHp}/{Combat.PlayerHpMax}");
 
         DrawEnergyGems(context, areaLeft + 360, PlayerStripTop + 14, _combat.Energy, Combat.EnergyMax);
+
+        var pileFt = new FormattedText($"山札 {_combat.DrawPileCount} ・ 捨て {_combat.DiscardPileCount}",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 12, Palette.ParchmentBrush);
+        context.DrawText(pileFt, new Point(areaLeft + 600, PlayerStripTop + 18));
 
         DrawEndTurnButton(context, EndTurnRect, _combat.Phase == CombatPhase.Idle);
     }

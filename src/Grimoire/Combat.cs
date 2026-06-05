@@ -56,17 +56,21 @@ public sealed class Combat
     public int IntentDamage => BaseIntent + Overload;
 
     public CombatPhase Phase { get; private set; } = CombatPhase.Idle;
-    public int ActiveCard { get; private set; } = -1;
 
-    private readonly Card[] _hand =
-    {
-        new("Probe Request", 1, "過負荷源を\n診断し弱化", CardKind.Probe),
-        new("Packet Filter", 1, "悪性流量を\n選別遮断", CardKind.Filter),
-        new("Lookup",        1, "名前解決で\n+1 ドロー", CardKind.Lookup),
-        new("Echo Reply",    2, "複製で\n複数対処",     CardKind.Echo),
-        new("Probe Request", 1, "過負荷源を\n診断し弱化", CardKind.Probe),
-    };
+    // ===== デッキ循環 (classes.md 決定5: 初期デッキ10枚 4-3-2-1) =====
+    public const int HandSize = 5;
+    private readonly List<Card> _drawPile = new();
+    private readonly List<Card> _hand = new();
+    private readonly List<Card> _discard = new();
     public IReadOnlyList<Card> Hand => _hand;
+    public int DrawPileCount => _drawPile.Count;
+    public int DiscardPileCount => _discard.Count;
+
+    public Combat()
+    {
+        BuildDeck();
+        DrawToFull();
+    }
 
     // ===== probe operation 状態 =====
     // card-operations.md アーキタイプ1: 複数スロットへ probe を送り、応答が返らない
@@ -151,13 +155,14 @@ public sealed class Combat
     public bool TryPlayCard(int index)
     {
         if (Phase != CombatPhase.Idle) return false;
-        if (index < 0 || index >= _hand.Length) return false;
+        if (index < 0 || index >= _hand.Count) return false;
         var card = _hand[index];
         if (!card.OperationImplemented) return false;   // filter/lookup/echo は後続
         if (Energy < card.Cost) return false;
 
         Energy -= card.Cost;
-        ActiveCard = index;
+        _hand.RemoveAt(index);
+        _discard.Add(card);             // 使用したカードは捨て山へ (quiz-cadence 決定3: 成否問わず)
         StartProbe();
         return true;
     }
@@ -172,6 +177,7 @@ public sealed class Combat
     public void EndTurn()
     {
         if (Phase != CombatPhase.Idle) return;
+        DiscardHand();                  // 残った手札は捨て山へ (StS 流: ターン終了で手札を流す)
         Phase = CombatPhase.EnemyTurn;
         _enemyT = 0;
         _enemyApplied = false;
@@ -202,7 +208,6 @@ public sealed class Combat
 
     private void FinishResolve()
     {
-        ActiveCard = -1;
         Phase = EnemyHp <= 0 ? CombatPhase.Won : CombatPhase.Idle;
     }
 
@@ -223,7 +228,54 @@ public sealed class Combat
             return;
         }
         Energy = EnergyMax;
+        DrawToFull();                   // 新しい手番の手札を引く
         Phase = CombatPhase.Idle;
+    }
+
+    // ===== デッキ操作 =====
+
+    private void BuildDeck()
+    {
+        _drawPile.Clear();
+        _hand.Clear();
+        _discard.Clear();
+        for (int i = 0; i < 4; i++) _drawPile.Add(new Card("Probe Request", 1, "過負荷源を\n診断し弱化", CardKind.Probe));
+        for (int i = 0; i < 3; i++) _drawPile.Add(new Card("Packet Filter", 1, "悪性流量を\n選別遮断", CardKind.Filter));
+        for (int i = 0; i < 2; i++) _drawPile.Add(new Card("Lookup",        1, "名前解決で\n+1 ドロー", CardKind.Lookup));
+        _drawPile.Add(new Card("Echo Reply", 2, "複製で\n複数対処", CardKind.Echo));
+        Shuffle(_drawPile);
+    }
+
+    private void DrawToFull()
+    {
+        while (_hand.Count < HandSize)
+        {
+            if (_drawPile.Count == 0)
+            {
+                if (_discard.Count == 0) break;     // 引けるカードが尽きた
+                _drawPile.AddRange(_discard);
+                _discard.Clear();
+                Shuffle(_drawPile);
+            }
+            var top = _drawPile[^1];
+            _drawPile.RemoveAt(_drawPile.Count - 1);
+            _hand.Add(top);
+        }
+    }
+
+    private void DiscardHand()
+    {
+        _discard.AddRange(_hand);
+        _hand.Clear();
+    }
+
+    private void Shuffle(List<Card> cards)
+    {
+        for (int i = cards.Count - 1; i > 0; i--)
+        {
+            int j = _rng.Next(i + 1);
+            (cards[i], cards[j]) = (cards[j], cards[i]);
+        }
     }
 
     // ===== Won/Defeated → 再戦 =====
@@ -234,13 +286,14 @@ public sealed class Combat
         EnemyHp = EnemyHpMax;
         Energy = EnergyMax;
         Overload = 3;
-        ActiveCard = -1;
         LastSuccess = false;
         LastDamage = 0;
         _resolveT = 0;
         _enemyT = 0;
         _enemyApplied = false;
         Array.Clear(_slotProbe, 0, SlotCount);
+        BuildDeck();
+        DrawToFull();
         Phase = CombatPhase.Idle;
     }
 }
